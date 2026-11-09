@@ -41,24 +41,8 @@ class JavaRecorder:
                 args += ["--source-root", str(r)]
             for p in index.packages:
                 args += ["--package", p]
-            rec = subprocess.Popen(helper + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            err_chunks: list[str] = []
-            drain = threading.Thread(target=lambda: err_chunks.append(rec.stderr.read()), daemon=True)
-            drain.start()
-            try:
-                address = _listening_address(rec)
-                started = time.time()
-                build_out = _run_build(build, test, address, jdk, Path(tmp))
-                try:
-                    rec.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    pass
-            finally:
-                if rec.poll() is None:
-                    rec.kill()
-                    rec.wait()
-            drain.join(timeout=5)
-            helper_err = "".join(err_chunks)
+            build_out, helper_err, started = attach_and_build(
+                helper + args, build, lambda agent, init: build.command(test, agent, init), jdk, Path(tmp))
             if not out.exists():
                 raise RecordingFailed(
                     f"the test JVM never connected to the recorder.\n{build.tool} output:\n{build_out[-4000:]}\n{helper_err[-2000:]}"
@@ -90,13 +74,39 @@ def _listening_address(proc: subprocess.Popen) -> str:
     return f"127.0.0.1:{port}"
 
 
-def _run_build(build: Build, test: JavaTest, address: str, jdk: Path, tmp: Path) -> str:
+def attach_and_build(helper_cmd: list[str], build: Build, command, jdk: Path, tmp: Path) -> tuple[str, str, float]:
+    """Start the helper (it listens for the test JVM), then run the build with the debug agent.
+
+    command(agent, init_script) -> the build command line. Returns (build output, helper
+    stderr, when the build started).
+    """
+    rec = subprocess.Popen(helper_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    err_chunks: list[str] = []
+    drain = threading.Thread(target=lambda: err_chunks.append(rec.stderr.read()), daemon=True)
+    drain.start()
+    try:
+        address = _listening_address(rec)
+        started = time.time()
+        build_out = _run_build(build, command, address, jdk, tmp)
+        try:
+            rec.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+    finally:
+        if rec.poll() is None:
+            rec.kill()
+            rec.wait()
+    drain.join(timeout=5)
+    return build_out, "".join(err_chunks), started
+
+
+def _run_build(build: Build, command, address: str, jdk: Path, tmp: Path) -> str:
     agent = f"-agentlib:jdwp=transport=dt_socket,server=n,suspend=y,address={address}"
     init = None
     if build.tool == "gradle":
         init = tmp / "wiz-init.gradle"
         init.write_text(gradle_init_script(agent), encoding="utf-8")
-    cmd = build.command(test, agent, init)
+    cmd = command(agent, init)
     env = {**os.environ, "JAVA_HOME": str(jdk)}
     proc = subprocess.run(cmd, cwd=build.root, env=env, capture_output=True, text=True)
     return f"$ {' '.join(cmd)}\n{proc.stdout}{proc.stderr}"

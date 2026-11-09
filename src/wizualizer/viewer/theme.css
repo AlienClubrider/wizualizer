@@ -1,0 +1,28 @@
+/* Palettes shared by the viewer and the flows page. Light is the default;
+   <html data-theme="dark"> switches (see theme.js). */
+:root {
+  color-scheme: light;
+  --bg: #f4f6f8; --panel: #ffffff; --panel-2: #eef1f5; --line: #d5dbe3;
+  --text: #17202c; --muted: #556171; --faint: #7d8794;
+  --cur: #0a5fc4; --cur-bg: rgba(10,95,196,.11); --cur-text: #08305f; --on-cur: #ffffff;
+  --ran: #157a47; --ran-bg: rgba(21,122,71,.11);
+  --chg: #a35f00; --chg-bg: rgba(222,150,0,.17);
+  --miss: #c42b2b; --miss-bg: rgba(196,43,43,.08); --miss-line: rgba(196,43,43,.45); --on-miss: #ffffff;
+  --node-term: #e6eaf0; --node-dec: #f4f1e8; --node-dec-line: #b9b09a; --node-ret: #6f7c8d; --node-raise: #b56b6b;
+  --act: #dde4ee; --act-line: #aab6c6; --flash: rgba(222,150,0,.38);
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --controls-h: 104px;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216; --panel: #161a20; --panel-2: #1c2129; --line: #2a313b;
+  --text: #dfe5ec; --muted: #8a96a5; --faint: #5b6675;
+  --cur: #4aa3ff; --cur-bg: rgba(74,163,255,.16); --cur-text: #ffffff; --on-cur: #06121f;
+  --ran: #3fbf7f; --ran-bg: rgba(63,191,127,.13);
+  --chg: #f0b429; --chg-bg: rgba(240,180,41,.14);
+  --miss: #ff5d5d; --miss-bg: rgba(255,93,93,.14); --miss-line: rgba(255,93,93,.45); --on-miss: #1a0d0d;
+  --node-term: #232a34; --node-dec: #1f2530; --node-dec-line: #3a4452; --node-ret: #6b7a8c; --node-raise: #8c5a5a;
+  --act: #2b3442; --act-line: #3b4656; --flash: rgba(240,180,41,.45);
+}
+.theme-toggle { flex: none; width: 40px; height: 36px; padding: 0; font-size: 16px; line-height: 1; background: var(--panel-2); }

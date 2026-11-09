@@ -20,6 +20,10 @@ import java.util.Map;
  *   record --root DIR --out FILE --test pkg.Class#method [--max-steps N] [--timeout MS]
  *          --source-root DIR... --package NAME...
  *       Listen for the test JVM (prints "LISTENING host:port"), record, write FILE.
+ *   probe --root DIR --out FILE --watch FILE --tests FILE [--timeout MS]
+ *         --source-root DIR... --package NAME...
+ *       Listen for the test JVM, note which tests (one Class#method per line in --tests) run
+ *       which watched lines ("path\tline" per line in --watch), write FILE.
  *   outline FILE...
  *       Print {"FILE": outline} as JSON.
  *   serve
@@ -34,6 +38,7 @@ public final class Main {
     }
     switch (argv[0]) {
       case "record" -> record(argv);
+      case "probe" -> probe(argv);
       case "outline" -> {
         StringBuilder sb = new StringBuilder("{");
         for (int i = 1; i < argv.length; i++) {
@@ -75,6 +80,32 @@ public final class Main {
       throw new IllegalArgumentException("record needs --root, --out and --test pkg.Class#method");
     }
     new Recorder(root, sourceRoots, packages, test, maxSteps, out).run(timeout);
+  }
+
+  private static void probe(String[] argv) throws Exception {
+    Path root = null, out = null, watch = null, tests = null;
+    int timeout = 900_000;
+    List<Path> sourceRoots = new ArrayList<>();
+    List<String> packages = new ArrayList<>();
+    for (int i = 1; i < argv.length; i += 2) {
+      String v = argv[i + 1];
+      switch (argv[i]) {
+        case "--root" -> root = Path.of(v).toAbsolutePath().normalize();
+        case "--out" -> out = Path.of(v);
+        case "--watch" -> watch = Path.of(v);
+        case "--tests" -> tests = Path.of(v);
+        case "--timeout" -> timeout = Integer.parseInt(v);
+        case "--source-root" -> sourceRoots.add(Path.of(v).toAbsolutePath().normalize());
+        case "--package" -> packages.add(v);
+        default -> throw new IllegalArgumentException("unknown option " + argv[i]);
+      }
+    }
+    if (root == null || out == null || watch == null || tests == null) {
+      throw new IllegalArgumentException("probe needs --root, --out, --watch and --tests");
+    }
+    java.util.Set<String> testIds = new java.util.HashSet<>(Files.readAllLines(tests, StandardCharsets.UTF_8));
+    testIds.remove("");
+    new Probe(root, sourceRoots, packages, Probe.readWatch(watch), testIds, out).run(timeout);
   }
 
   private static void serve() throws IOException {

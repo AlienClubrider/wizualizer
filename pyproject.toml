@@ -4,11 +4,32 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wizualizer"
-version = "0.1.0"
-description = "Step through the code a PR changes, from its tests: flowchart, variables, sequence diagram."
+version = "0.2.0"
+description = "Step through what your tests run: flowchart, variables, sequence diagram and changed-line coverage, in a local web app."
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Bryson Bailey" }]
+keywords = ["testing", "debugging", "visualization", "pytest", "junit", "code-review"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Java",
+    "Topic :: Software Development :: Debuggers",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/AlienClubrider/wizualizer"
+Documentation = "https://github.com/AlienClubrider/wizualizer/tree/main/docs"
+Issues = "https://github.com/AlienClubrider/wizualizer/issues"
 
 [project.optional-dependencies]
 dev = ["pytest==9.2.0"]
@@ -21,6 +42,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "wizualizer.viewer" = ["*.html", "*.js", "*.css"]
+"wizualizer.web" = ["*.html", "*.js", "*.css"]
 "wizualizer.java" = ["helper/wiz/*.java"]
 
 [tool.pytest.ini_options]

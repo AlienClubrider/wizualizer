@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,9 +55,27 @@ class PythonRecorder:
 
 
 def default_interpreter(root: Path) -> str:
-    """The project's own virtualenv if it has one, else the interpreter running wiz."""
+    """The project's own virtualenv, else the active one, else a `python3` on PATH that has pytest,
+    else the one running wiz.
+
+    wiz installed with pipx or `uv tool` runs in an isolated environment without the project's pytest,
+    so its own interpreter is the last resort.
+    """
+    venv = os.environ.get("VIRTUAL_ENV")
     for candidate in (root / ".venv" / "bin" / "python", root / "venv" / "bin" / "python",
-                      root / ".venv" / "Scripts" / "python.exe"):
+                      root / ".venv" / "Scripts" / "python.exe",
+                      *([Path(venv) / "bin" / "python"] if venv else [])):
         if candidate.exists():
             return str(candidate)
+    for python in filter(None, (shutil.which("python3"), shutil.which("python"))):
+        if _has_pytest(python):
+            return python
     return sys.executable
+
+
+@functools.cache
+def _has_pytest(python: str) -> bool:
+    try:
+        return subprocess.run([python, "-c", "import pytest"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False

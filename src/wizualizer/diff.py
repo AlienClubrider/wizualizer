@@ -77,3 +77,17 @@ def _git(repo: Path, *args: str) -> str:
     if proc.returncode != 0:
         raise GitError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
+
+
+BASE_CANDIDATES = ("main", "master", "origin/main", "origin/master")
+
+
+def default_base(repo: Path) -> str:
+    """The branch a PR is usually based on: main or master (local, else origin). HEAD if neither exists,
+    which leaves only uncommitted work as the change."""
+    for ref in BASE_CANDIDATES:
+        proc = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                              cwd=repo, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return ref
+    return "HEAD"

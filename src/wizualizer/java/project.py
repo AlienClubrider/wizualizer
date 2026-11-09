@@ -114,13 +114,20 @@ class Build:
 
     def command(self, test: JavaTest, agent: str, init_script: Path | None = None) -> list[str]:
         """The build command that runs only `test`, with `agent` added to the test JVM."""
+        return self.command_for(
+            [f"{test.cls.replace('$', '*')}#{test.method}"], [f"{test.cls}.{test.method}"], agent, init_script)
+
+    def command_for_classes(self, classes: list[str], agent: str, init_script: Path | None = None) -> list[str]:
+        """The build command that runs every test in these (top-level) classes, in one test JVM."""
+        return self.command_for([",".join(classes)], classes, agent, init_script)
+
+    def command_for(self, maven_filters: list[str], gradle_filters: list[str], agent: str,
+                    init_script: Path | None) -> list[str]:
         if self.tool == "maven":
-            cmd = [
-                self.executable, "-B", "--no-transfer-progress", "test",
-                f"-Dtest={test.cls.replace('$', '*')}#{test.method}",
-                "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false",
-                f"-Dmaven.surefire.debug={agent}", "-DforkCount=1", "-DtrimStackTrace=false",
-            ]
+            cmd = [self.executable, "-B", "--no-transfer-progress", "test",
+                   *(f"-Dtest={f}" for f in maven_filters),
+                   "-Dsurefire.failIfNoSpecifiedTests=false", "-DfailIfNoTests=false",
+                   f"-Dmaven.surefire.debug={agent}", "-DforkCount=1", "-DtrimStackTrace=false"]
             if self.module_path:
                 cmd += ["-pl", self.module_path, "-am"]
             return cmd
@@ -128,7 +135,10 @@ class Build:
         cmd = [self.executable, "--console=plain", "--no-scan"]
         if init_script:
             cmd += ["--init-script", str(init_script)]
-        return cmd + [task, "--tests", f"{test.cls}.{test.method}"]
+        cmd.append(task)
+        for f in gradle_filters:
+            cmd += ["--tests", f]
+        return cmd
 
     def report(self, test: JavaTest) -> Path:
         """Where the JUnit XML report for the test class ends up."""

@@ -107,23 +107,7 @@ final class Recorder {
 
   // connection --------------------------------------------------------------------------------
   void run(int timeoutMs) throws Exception {
-    ListeningConnector lc =
-        Bootstrap.virtualMachineManager().listeningConnectors().stream()
-            .filter(c -> c.name().equals("com.sun.jdi.SocketListen"))
-            .findFirst()
-            .orElseThrow();
-    Map<String, Connector.Argument> args = lc.defaultArguments();
-    args.get("port").setValue("0");
-    if (args.containsKey("localAddress")) args.get("localAddress").setValue("127.0.0.1");
-    if (args.containsKey("timeout")) args.get("timeout").setValue(String.valueOf(timeoutMs));
-    String address = lc.startListening(args);
-    System.out.println("LISTENING " + address);
-    System.out.flush();
-    try {
-      vm = lc.accept(args);
-    } finally {
-      lc.stopListening(args);
-    }
+    vm = accept(timeoutMs);
     erm = vm.eventRequestManager();
     for (String pkg : packages) {
       ClassPrepareRequest r = erm.createClassPrepareRequest();
@@ -618,6 +602,27 @@ final class Recorder {
     rec.put("truncated", truncated);
     rec.put("test", test);
     Files.writeString(out, Json.write(rec), StandardCharsets.UTF_8);
+  }
+
+  /** Listen on a free 127.0.0.1 port, print "LISTENING host:port", accept the test JVM. */
+  static VirtualMachine accept(int timeoutMs) throws Exception {
+    ListeningConnector lc =
+        Bootstrap.virtualMachineManager().listeningConnectors().stream()
+            .filter(c -> c.name().equals("com.sun.jdi.SocketListen"))
+            .findFirst()
+            .orElseThrow();
+    Map<String, Connector.Argument> args = lc.defaultArguments();
+    args.get("port").setValue("0");
+    if (args.containsKey("localAddress")) args.get("localAddress").setValue("127.0.0.1");
+    if (args.containsKey("timeout")) args.get("timeout").setValue(String.valueOf(timeoutMs));
+    String address = lc.startListening(args);
+    System.out.println("LISTENING " + address);
+    System.out.flush();
+    try {
+      return lc.accept(args);
+    } finally {
+      lc.stopListening(args);
+    }
   }
 
   static List<String> minimalPrefixes(List<String> pkgs) {

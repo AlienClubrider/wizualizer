@@ -182,3 +182,19 @@ def test_gradle_end_to_end(shop, source, tmp_path, monkeypatch):
     trace = run(repo, source, "shop.OrderServiceTest#orderOver50ShipsFreeWithCoupon")
     check_shop_trace(trace)
     assert trace["meta"]["note"] == "gradle in ."
+
+
+def test_changed_flows_probe_runs_the_suite_once(shop):
+    """Only-changes mode on Java: one Maven run, breakpoints only on the changed lines."""
+    from wizualizer.languages import JavaLanguage
+    from wizualizer.workspace import Workspace
+
+    ws = Workspace(shop, {"java": JavaLanguage(shop)})
+    ids = [f.id for f in ws.flows()]
+    assert "shop.OrderServiceTest#orderOver50ShipsFreeWithCoupon" in ids
+    assert "shop.EdgeCaseTest#unknownSkuThrows" in ids
+    scan = ws.scan()["tests"]
+    assert scan["shop.OrderServiceTest#orderOver50ShipsFreeWithCoupon"]["lines"] == 4
+    assert scan["shop.OrderServiceTest#smallOrderPaysShipping"]["lines"] == 5
+    edge = scan["shop.EdgeCaseTest#unknownSkuThrows"]  # a new test: it changed, but runs no changed code
+    assert edge["lines"] == 0 and edge["test_lines"] >= 1

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="__CSP__">
+<meta name="referrer" content="no-referrer">
+<title>wiz · flows</title>
+<style>/*__THEME_CSS__*/
+/*__CSS__*/</style>
+<script>/*__THEME_JS__*/</script>
+</head>
+<body>
+<header class="top">
+  <span class="brand">wiz</span>
+  <div class="proj"><b id="proj-name"></b><span id="proj-kind" class="muted"></span></div>
+  <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch theme"></button>
+</header>
+<div id="problems" class="problems" hidden></div>
+<div class="toolbar">
+  <input id="search" type="search" placeholder="Search tests, classes, files" aria-label="Search flows" autocomplete="off" spellcheck="false">
+  <label class="switch" id="only-wrap">
+    <input type="checkbox" id="only" role="switch">
+    <span class="track" aria-hidden="true"><i></i></span>
+    <span class="switch-text"><b>Only changed flows</b><small id="only-sub"></small></span>
+  </label>
+</div>
+<div id="notice" class="notice" hidden></div>
+<main id="list" class="list" aria-live="polite"></main>
+<footer class="foot muted" id="foot"></footer>
+<script>/*__JS__*/</script>
+</body>
+</html>

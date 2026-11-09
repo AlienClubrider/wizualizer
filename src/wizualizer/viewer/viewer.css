@@ -1,14 +1,3 @@
-:root {
-  --bg: #0f1216; --panel: #161a20; --panel-2: #1c2129; --line: #2a313b;
-  --text: #dfe5ec; --muted: #8a96a5; --faint: #5b6675;
-  --cur: #4aa3ff; --cur-bg: rgba(74,163,255,.16);
-  --ran: #3fbf7f; --ran-bg: rgba(63,191,127,.13);
-  --chg: #f0b429; --chg-bg: rgba(240,180,41,.14);
-  --miss: #ff5d5d; --miss-bg: rgba(255,93,93,.14);
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --controls-h: 104px;
-}
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 var(--sans); }
 body { display: flex; flex-direction: column; overflow: hidden; }
@@ -71,13 +60,13 @@ svg text { font-family: var(--mono); font-size: 12px; fill: var(--text); }
 .fc .edge.hot { stroke: var(--cur); stroke-width: 2.6; }
 .fc .elabel { font-size: 10px; fill: var(--muted); font-family: var(--sans); }
 .fc .node .shape { fill: var(--panel-2); stroke: var(--line); stroke-width: 1.4; }
-.fc .node.k-start .shape, .fc .node.k-end .shape { fill: #232a34; }
-.fc .node.k-decision .shape, .fc .node.k-loop .shape { fill: #1f2530; stroke: #3a4452; }
-.fc .node.k-return .shape { stroke: #6b7a8c; }
-.fc .node.k-raise .shape { stroke: #8c5a5a; }
+.fc .node.k-start .shape, .fc .node.k-end .shape { fill: var(--node-term); }
+.fc .node.k-decision .shape, .fc .node.k-loop .shape { fill: var(--node-dec); stroke: var(--node-dec-line); }
+.fc .node.k-return .shape { stroke: var(--node-ret); }
+.fc .node.k-raise .shape { stroke: var(--node-raise); }
 .fc .node.visited .shape { fill: var(--ran-bg); stroke: var(--ran); }
 .fc .node.cur .shape { fill: var(--cur-bg); stroke: var(--cur); stroke-width: 2.6; }
-.fc .node.cur text.lbl { fill: #fff; font-weight: 600; }
+.fc .node.cur text.lbl { fill: var(--cur-text); font-weight: 600; }
 .fc .node.boom .shape { stroke: var(--miss); fill: var(--miss-bg); }
 .fc .node .stripe { fill: var(--chg); }
 .fc .node.miss .shape { stroke: var(--miss); stroke-dasharray: 5 3; stroke-width: 2; }
@@ -106,7 +95,7 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .sq .life { stroke: var(--line); stroke-dasharray: 3 4; }
 .sq .actor rect { fill: var(--panel-2); stroke: var(--line); }
 .sq .actor text { font-family: var(--sans); font-weight: 600; font-size: 12px; }
-.sq .act { fill: #2b3442; stroke: #3b4656; }
+.sq .act { fill: var(--act); stroke: var(--act-line); }
 .sq .msg line, .sq .msg path { stroke: var(--muted); stroke-width: 1.3; fill: none; }
 .sq .msg.ret line, .sq .msg.ret path { stroke-dasharray: 4 3; }
 .sq .msg text { font-size: 11px; fill: var(--muted); }
@@ -131,7 +120,7 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .code .ln.cur { background: var(--cur-bg); }
 .code .ln.cur .no { color: var(--cur); font-weight: 700; }
 .code .ln.flash { animation: flash 1.2s ease-out; }
-@keyframes flash { from { background: rgba(240,180,41,.45); } to { background: transparent; } }
+@keyframes flash { from { background: var(--flash); } to { background: transparent; } }
 
 /* coverage -------------------------------------------------------------- */
 .cov-sum { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; margin-bottom: 10px; }
@@ -143,11 +132,11 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .cov-row { display: grid; grid-template-columns: 80px 3em 1fr; gap: 8px; align-items: center; width: 100%; padding: 7px 8px; margin: 2px 0; text-align: left; border-radius: 6px; background: var(--panel-2); border: 1px solid transparent; min-height: 40px; }
 .cov-row code { font-family: var(--mono); font-size: 12px; white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .cov-row .no { font-family: var(--mono); font-size: 12px; color: var(--muted); text-align: right; }
-.cov-row.not_run { border-color: rgba(255,93,93,.45); background: var(--miss-bg); }
+.cov-row.not_run { border-color: var(--miss-line); background: var(--miss-bg); }
 .cov-row.import_time, .cov-row.neutral { opacity: .6; }
 .st { white-space: nowrap; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; padding: 2px 6px; border-radius: 4px; text-align: center; }
 .st.ran { background: var(--ran-bg); color: var(--ran); }
-.st.not_run { background: var(--miss); color: #1a0d0d; }
+.st.not_run { background: var(--miss); color: var(--on-miss); }
 .st.import_time, .st.neutral { background: var(--panel); color: var(--muted); }
 
 /* controls -------------------------------------------------------------- */
@@ -158,7 +147,7 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 #scrub { width: 100%; height: 28px; accent-color: var(--cur); margin: 0; }
 .buttons { display: flex; align-items: center; gap: 6px; }
 .buttons button { min-width: 44px; height: 40px; padding: 0 10px; font-size: 16px; }
-.buttons button.play { min-width: 64px; background: var(--cur); border-color: var(--cur); color: #06121f; font-weight: 800; }
+.buttons button.play { min-width: 64px; background: var(--cur); border-color: var(--cur); color: var(--on-cur); font-weight: 800; }
 .buttons button.text { font-size: 13px; color: var(--chg); white-space: nowrap; }
 .buttons select { height: 40px; }
 .counter { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
@@ -186,3 +175,8 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
   .code { font-size: 12px; }
   .cov-row { grid-template-columns: 80px 2.6em 1fr; }
 }
+
+/* served by `wiz`: link back to the flows list */
+.back { flex: none; color: var(--muted); text-decoration: none; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.back:hover { color: var(--text); }
+.title .theme-toggle { margin-left: auto; }
