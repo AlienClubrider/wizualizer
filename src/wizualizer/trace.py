@@ -105,6 +105,7 @@ def _is_test_file(rel: str) -> bool:
     name = rel.rsplit("/", 1)[-1]
     return (
         name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py"
+        or name.endswith(("Test.java", "Tests.java", "IT.java"))
         or "/tests/" in f"/{rel}" or "/test/" in f"/{rel}"
     )
 

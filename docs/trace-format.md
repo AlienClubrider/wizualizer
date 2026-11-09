@@ -19,8 +19,8 @@ A new required field, or a changed meaning, bumps `version`.
     "message": "",                             // failure text, if any
     "note": "",                                // e.g. "node id matched 3 tests; recorded only the first"
     "duration_ms": 8.6,
-    "language": "python",
-    "recorder": "python-sys.monitoring",
+    "language": "python",                      // python | java
+    "recorder": "python-sys.monitoring",       // java: "java-jdi"
     "created": "2026-11-09T05:00:00+00:00",
     "truncated": false,                        // true if the step budget ran out
     "max_steps": 10000,
@@ -75,6 +75,28 @@ A new required field, or a changed meaning, bumps `version`.
   }
 }
 ```
+
+## Java traces
+
+Java uses the same version 1 schema: nothing new is required and no field
+changes meaning. What the values look like:
+
+- `functions` keys are `<file>:<line>` with the line of the method's first
+  annotation or modifier. Constructors are named `new Account` (qualname
+  `new Outer.Account`), methods `Account.withdraw`.
+- `locals` holds the locals in scope (parameters included) and then one
+  `this.<field>` entry per instance field. Values are Java-flavoured:
+  `"text"`, `'c'`, `null`, `Account(id=1, balance=100)`, `[1, 2]`,
+  `{key=value}`, `Kind.CREDIT`, `2026-11-09`, `mock UserAccountService`.
+- `return` of a `void` method has `"value": "void"`; a constructor's value
+  is the new object.
+- `meta.note` says which build ran the test, e.g. `"gradle in server"`.
+- Coverage: `import_time` means "runs at class load" (static field
+  initializers, static blocks). Instance field initializers are judged like
+  statements (they run in the constructor). Declarations without an
+  initializer, `else`, `try`, `finally`, `case` labels and closing braces are
+  `neutral`: javac emits no code for them. Test files also include
+  `*Test.java`, `*Tests.java`, `*IT.java` and anything under `test/`.
 
 ## Step semantics
 

@@ -1,0 +1,90 @@
+diff --git a/src/main/java/shop/Coupon.java b/src/main/java/shop/Coupon.java
+index cc9250f..c15d231 100644
+--- a/src/main/java/shop/Coupon.java
++++ b/src/main/java/shop/Coupon.java
+@@ -2,4 +2,4 @@ package shop;
+ 
+ import java.time.LocalDate;
+ 
+-public record Coupon(String code, int percentOff, LocalDate expires) {}
++public record Coupon(String code, int percentOff, LocalDate expires, long minSubtotalCents) {}
+diff --git a/src/main/java/shop/OrderService.java b/src/main/java/shop/OrderService.java
+index a560d93..fc027db 100644
+--- a/src/main/java/shop/OrderService.java
++++ b/src/main/java/shop/OrderService.java
+@@ -27,7 +27,7 @@ public class OrderService {
+     long subtotal = cart.subtotalCents();
+     Coupon coupon = request.coupon() == null ? null : coupons.get(request.coupon());
+     long discount = Pricing.couponDiscountCents(subtotal, coupon, today);
+-    long shipping = Pricing.shippingCents(subtotal, cart.weightG());
++    long shipping = Pricing.shippingCents(subtotal - discount, cart.weightG());
+     return new Receipt(subtotal, discount, shipping, subtotal - discount + shipping);
+   }
+ }
+diff --git a/src/main/java/shop/Pricing.java b/src/main/java/shop/Pricing.java
+index 5260dad..98a9a50 100644
+--- a/src/main/java/shop/Pricing.java
++++ b/src/main/java/shop/Pricing.java
+@@ -3,7 +3,10 @@ package shop;
+ import java.time.LocalDate;
+ 
+ public final class Pricing {
++  static final long FREE_SHIPPING_FROM_CENTS = 5_000;
+   static final long BASE_SHIPPING_CENTS = 499;
++  static final int HEAVY_PARCEL_G = 20_000;
++  static final long HEAVY_SURCHARGE_CENTS = 1_500;
+ 
+   private Pricing() {}
+ 
+@@ -14,10 +17,20 @@ public final class Pricing {
+     if (today.isAfter(coupon.expires())) {
+       throw new CouponNotApplicable(coupon.code() + " expired on " + coupon.expires());
+     }
++    if (subtotalCents < coupon.minSubtotalCents()) {
++      throw new CouponNotApplicable(coupon.code() + " needs a subtotal of " + coupon.minSubtotalCents());
++    }
+     return subtotalCents * coupon.percentOff() / 100;
+   }
+ 
+   public static long shippingCents(long subtotalCents, int weightG) {
+-    return BASE_SHIPPING_CENTS;
++    if (subtotalCents >= FREE_SHIPPING_FROM_CENTS) {
++      return 0;
++    }
++    long cost = BASE_SHIPPING_CENTS;
++    if (weightG > HEAVY_PARCEL_G) {
++      cost += HEAVY_SURCHARGE_CENTS;
++    }
++    return cost;
+   }
+ }
+diff --git a/src/test/java/shop/OrderServiceTest.java b/src/test/java/shop/OrderServiceTest.java
+index db4f5d0..b8ca02f 100644
+--- a/src/test/java/shop/OrderServiceTest.java
++++ b/src/test/java/shop/OrderServiceTest.java
+@@ -18,12 +18,12 @@ class OrderServiceTest {
+                 new Product("MUG", "Enamel mug", 1_800, 350),
+                 new Product("BEANS", "Coffee beans 1kg", 2_400, 1_000),
+                 new Product("GRINDER", "Hand grinder", 6_500, 900)));
+-    List<Coupon> coupons = List.of(new Coupon("WELCOME10", 10, LocalDate.of(2026, 12, 31)));
++    List<Coupon> coupons = List.of(new Coupon("WELCOME10", 10, LocalDate.of(2026, 12, 31), 3_000));
+     service = new OrderService(catalog, coupons, LocalDate.of(2026, 11, 9));
+   }
+ 
+   @Test
+-  void orderWithCoupon() {
++  void orderOver50ShipsFreeWithCoupon() {
+     Receipt receipt =
+         service.placeOrder(
+             new OrderRequest(
+@@ -35,8 +35,8 @@ class OrderServiceTest {
+ 
+     assertEquals(7_800, receipt.subtotalCents());
+     assertEquals(780, receipt.discountCents());
+-    assertEquals(499, receipt.shippingCents());
+-    assertEquals(7_519, receipt.totalCents());
++    assertEquals(0, receipt.shippingCents());
++    assertEquals(7_020, receipt.totalCents());
+   }
+ 
+   @Test

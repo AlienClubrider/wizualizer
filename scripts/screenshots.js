@@ -1,13 +1,21 @@
 // Render the demo viewer headless and save docs/screenshots/*.png.
 // Run ./examples/demo.sh first. Needs Playwright (require('playwright')).
+// `node scripts/screenshots.js java <viewer.html>` instead shoots the RuneStone-Bank
+// transfer test (see README) as docs/screenshots/java-*.png.
 const path = require('path');
 const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '..');
-const html = path.join(root, '.wiz', 'tests_test_orders.py__test_order_over_50_ships_free_with_coupon.html');
+const java = process.argv[2] === 'java';
+const html = java ? path.resolve(process.argv[3])
+  : path.join(root, '.wiz', 'tests_test_orders.py__test_order_over_50_ships_free_with_coupon.html');
 const out = (name) => path.join(root, 'docs', 'screenshots', name);
 
-const shots = [
+const shots = java ? [
+  // Mid-play in TransactionServiceImpl.transfer, on the line the PR changed.
+  { name: 'java-flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(80)' },
+  { name: 'java-phone.png', viewport: { width: 390, height: 844 }, setup: 'wiz.go(80)' },
+] : [
   // Flowchart mid-play: inside shipping_cents, showing the path taken and the PR lines that never ran.
   { name: 'flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(76)' },
   { name: 'coverage.png', viewport: { width: 1440, height: 1100 }, setup: "wiz.go(68); wiz.setSide('cov')" },

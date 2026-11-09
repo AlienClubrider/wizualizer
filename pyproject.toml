@@ -21,6 +21,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "wizualizer.viewer" = ["*.html", "*.js", "*.css"]
+"wizualizer.java" = ["helper/wiz/*.java"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

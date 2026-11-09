@@ -297,7 +297,8 @@
     const head = h('svg', { class: 'sq sq-head', viewBox: `0 0 ${W} ${HH}`, width: W, height: HH }, host);
     for (const a of actors) {
       const g = h('g', { class: 'actor' }, head);
-      const name = clip(actorName(a), 19);
+      const full = actorName(a);
+      const name = full.length <= 19 ? full : full.slice(0, 9) + '…' + full.slice(-9);
       const w = Math.min(COL - 10, name.length * 7.4 + 20);
       h('rect', { x: ax(a) - w / 2, y: 6, width: w, height: 28, rx: 6 }, g);
       h('text', { x: ax(a), y: 24, 'text-anchor': 'middle' }, g, name);
@@ -425,12 +426,14 @@
     if (row) {
       if (!peek) { row.classList.add('cur'); view.lastCur = row; }
       else { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); }
-      keepInView(host, 0, row.offsetTop, 0, row.offsetHeight);
+      const y = row.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
+      keepInView(host, 0, y, 0, row.offsetHeight);
     }
   }
 
   // ---- PR coverage ---------------------------------------------------------------------
-  const STATUS_TEXT = { ran: 'ran', not_run: 'never ran', import_time: 'import', neutral: 'no code' };
+  const isJava = T.meta.language === 'java';
+  const STATUS_TEXT = { ran: 'ran', not_run: 'never ran', import_time: isJava ? 'class load' : 'import', neutral: 'no code' };
   function renderMeter() {
     const m = $('cov-meter');
     m.replaceChildren();
@@ -465,7 +468,8 @@
     const d = T.meta.diff || {};
     h('p', { class: 'cov-note' }, host,
       `Changes since ${d.base || 'base'} (${d.merge_base || '?'}…${d.head || '?'}). Tap a line to jump to it. ` +
-      `"import" lines run when the module loads, not in the test. ` +
+      (isJava ? '"class load" lines (static fields and blocks) run when the class loads, not in the test. '
+        : '"import" lines run when the module loads, not in the test. ') +
       (cov.skipped_test_files.length ? `Test files are not counted: ${cov.skipped_test_files.join(', ')}.` : ''));
     for (const [file, statuses] of Object.entries(cov.files)) {
       const rank = { not_run: 0, ran: 1, import_time: 2, neutral: 3 };
