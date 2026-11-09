@@ -136,6 +136,10 @@ def test_pytest_recorder_end_to_end_with_change_coverage(repo):
     assert trace["coverage"]["files"]["calc.py"] == {"2": "ran", "3": "not_run"}
     assert trace["functions"]["calc.py:1"]["flowchart"]["nodes"][1]["label"] == "if q > 10"
     assert trace["files"]["calc.py"]["changed"] == [2, 3]
+    assert trace["functions"]["tests/test_calc.py:4"]["test"] is True
+    assert trace["functions"]["calc.py:1"]["test"] is False
+    assert trace["meta"]["focus"] == "calc.py:1"
+    assert trace["meta"]["show_test_steps"] is False
     json.dumps(trace)  # serialisable
 
     html = render_html(trace)

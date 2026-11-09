@@ -6,6 +6,7 @@ import datetime as dt
 from pathlib import Path
 
 from . import change_coverage
+from .focus import function_under_test, is_test_file, in_test_code
 from .diff import FileChange
 from .ports import Recorder, RecordRequest, SourceModel
 
@@ -20,6 +21,7 @@ def make_trace(
     changes: dict[str, FileChange] | None = None,
     diff_info: dict | None = None,
     read_file=None,
+    show_test_steps: bool = False,
 ) -> dict:
     """Record one test and enrich it into a full trace.
 
@@ -27,10 +29,12 @@ def make_trace(
     """
     read_file = read_file or (lambda rel: _read(request.root / rel))
     recording = recorder.record(request)
-    return build_trace(recording, source_model, request, recorder, changes or {}, diff_info, read_file)
+    return build_trace(recording, source_model, request, recorder, changes or {}, diff_info, read_file, show_test_steps)
 
 
-def build_trace(recording, source_model, request, recorder, changes, diff_info, read_file) -> dict:
+def build_trace(
+    recording, source_model, request, recorder, changes, diff_info, read_file, show_test_steps=False,
+) -> dict:
     functions = recording["functions"]
     frames = recording["frames"]
     steps = recording["steps"]
@@ -60,9 +64,18 @@ def build_trace(recording, source_model, request, recorder, changes, diff_info, 
         text = files.get(fn["file"], {}).get("source")
         fn["flowchart"] = source_model.flowchart(text, fn["line"]) if text is not None else None
 
+    test_fns = in_test_code(functions, frames)
+    for fid, fn in functions.items():
+        fn["test"] = fid in test_fns
+    focus = function_under_test(
+        steps, frames, test_fns,
+        {fid: _span(fn) for fid, fn in functions.items()},
+        {rel: c.added for rel, c in changes.items()},
+    )
+
     per_file: dict[str, dict[int, str]] = {}
     for rel, change in changes.items():
-        if not source_model.handles(rel) or rel not in files or _is_test_file(rel):
+        if not source_model.handles(rel) or rel not in files or is_test_file(rel):
             continue
         statuses = change_coverage.classify_lines(
             change.added,
@@ -88,6 +101,8 @@ def build_trace(recording, source_model, request, recorder, changes, diff_info, 
             "truncated": recording.get("truncated", False),
             "max_steps": request.max_steps,
             "diff": diff_info,
+            "focus": focus,
+            "show_test_steps": show_test_steps,
         },
         "files": files,
         "functions": functions,
@@ -96,18 +111,16 @@ def build_trace(recording, source_model, request, recorder, changes, diff_info, 
         "coverage": {
             "files": {rel: {str(k): v for k, v in st.items()} for rel, st in sorted(per_file.items())},
             "summary": change_coverage.summarize(per_file),
-            "skipped_test_files": sorted(p for p in changes if _is_test_file(p)),
+            "skipped_test_files": sorted(p for p in changes if is_test_file(p)),
         } if diff_info else None,
     }
 
 
-def _is_test_file(rel: str) -> bool:
-    name = rel.rsplit("/", 1)[-1]
-    return (
-        name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py"
-        or name.endswith(("Test.java", "Tests.java", "IT.java"))
-        or "/tests/" in f"/{rel}" or "/test/" in f"/{rel}"
-    )
+def _span(fn: dict) -> range:
+    """Source lines of a function, from its flowchart."""
+    nodes = (fn.get("flowchart") or {}).get("nodes", [])
+    last = max((n["lines"][1] for n in nodes), default=fn["line"])
+    return range(fn["line"], max(last, fn["line"]) + 1)
 
 
 def _read(path: Path) -> str | None:

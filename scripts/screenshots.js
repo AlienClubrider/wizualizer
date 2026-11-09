@@ -13,13 +13,13 @@ const out = (name) => path.join(root, 'docs', 'screenshots', name);
 
 const shots = java ? [
   // Mid-play in TransactionServiceImpl.transfer, on the line the PR changed.
-  { name: 'java-flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(80)' },
-  { name: 'java-phone.png', viewport: { width: 390, height: 844 }, setup: 'wiz.go(80)' },
+  { name: 'java-flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(66)' },
+  { name: 'java-phone.png', viewport: { width: 390, height: 844 }, setup: 'wiz.go(66)' },
 ] : [
   // Flowchart mid-play: inside shipping_cents, showing the path taken and the PR lines that never ran.
-  { name: 'flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(76)' },
-  { name: 'coverage.png', viewport: { width: 1440, height: 1100 }, setup: "wiz.go(68); wiz.setSide('cov')" },
-  { name: 'phone.png', viewport: { width: 390, height: 844 }, setup: 'wiz.go(76)' },
+  { name: 'flowchart.png', viewport: { width: 1440, height: 900 }, setup: 'wiz.go(71)' },
+  { name: 'coverage.png', viewport: { width: 1440, height: 1100 }, setup: "wiz.go(63); wiz.setSide('cov')" },
+  { name: 'phone.png', viewport: { width: 390, height: 844 }, setup: 'wiz.go(71)' },
 ];
 
 (async () => {

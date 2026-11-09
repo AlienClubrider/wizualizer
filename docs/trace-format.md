@@ -24,7 +24,9 @@ A new required field, or a changed meaning, bumps `version`.
     "created": "2026-11-09T05:00:00+00:00",
     "truncated": false,                        // true if the step budget ran out
     "max_steps": 10000,
-    "diff": { "base": "main", "merge_base": "56d715886b09", "head": "f69f584" }  // null without --base
+    "diff": { "base": "main", "merge_base": "56d715886b09", "head": "f69f584" },  // null without --base
+    "focus": "shop/orders.py:21",              // function under test the viewer opens on; null if none ran
+    "show_test_steps": false                   // wiz run --test-steps: viewer starts with test steps shown
   },
 
   // Source of every file that ran or that the PR changed (for the source view).
@@ -41,6 +43,7 @@ A new required field, or a changed meaning, bumps `version`.
     "shop/pricing.py:32": {
       "name": "shipping_cents", "qualname": "shipping_cents",
       "file": "shop/pricing.py", "line": 32,
+      "test": false,                            // test code: hidden in the viewer by default
       "flowchart": {                            // null if source was unavailable
         "nodes": [
           // in source order; lines = the source span the node owns ([0,0] for end)
@@ -97,6 +100,18 @@ changes meaning. What the values look like:
   initializer, `else`, `try`, `finally`, `case` labels and closing braces are
   `neutral`: javac emits no code for them. Test files also include
   `*Test.java`, `*Tests.java`, `*IT.java` and anything under `test/`.
+
+## Test code and the function under test
+
+`functions[].test` is true for every function in a test file (see the end of
+this page) and for the entry frame's function (the test itself). Steps of test
+frames stay in `steps`; the viewer hides them unless asked, and draws the
+test as one `test` actor making the top-level calls.
+
+`meta.focus` is the first function, in call order, that is not test code and
+whose lines (from its flowchart) include a PR-changed line; without one, the
+first non-test function called. Older traces without these fields play back
+with every step shown.
 
 ## Step semantics
 

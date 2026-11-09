@@ -11,7 +11,12 @@ HTML even sets a Content-Security-Policy that blocks all network access).
 
 ![Flowchart mid-play](docs/screenshots/flowchart.png)
 
-What you get:
+What you get: the code under test. The test only drives it, so its own lines
+are hidden: the viewer opens on the **function under test** (the first
+function the PR changed that the test reaches, else the first one the test
+calls), and the test is a single `test` actor in the sequence diagram.
+"show test steps" under the flowchart (or `wiz run --test-steps`) brings the
+test's own steps back.
 
 - **Flowchart** of the function being run (follows calls, or pin one), with the
   current step lit, the path taken so far, PR-changed nodes striped, and
@@ -80,6 +85,8 @@ cd ~/work/some-service                     # your checkout, on the PR branch
 - `--python PATH`: interpreter to run pytest with. Default: the project's
   `.venv/bin/python` (or `venv/`), else the one running `wiz`. It must be 3.12+
   and have pytest; wizualizer itself does not need to be installed there.
+- `--test-steps`: open the viewer with the test's own steps shown. They are
+  always recorded; the viewer's "show test steps" toggles them either way.
 - `--max-steps N` (default 10000): recording stops there and the viewer says
   "truncated".
 - `--out DIR` (default `.wiz`). Add `.wiz/` to your `.gitignore`.
@@ -123,11 +130,19 @@ collections and maps their items; `BigDecimal`, `java.time` and `UUID` their
 value; other library objects their class name. The recorder only invokes JDK
 methods (`toArray`, `toString` of those value types), never project code.
 
+### What counts as test code
+
+Test files: `test_*.py`, `*_test.py`, `conftest.py`, `*Test.java`,
+`*Tests.java`, `*IT.java`, and anything under a `tests/` or `test/` folder
+(so all of Maven/Gradle's `src/test/**`). Every function in them, plus the
+test function itself wherever it lives, is test code: recorded but hidden in
+the viewer by default, and changed lines in test files are listed as "test
+changes" outside the coverage number.
+
 ### Python
 
 What gets recorded: code under the git root, minus virtualenvs and
-site-packages. Test functions are recorded (they are the entry point) but test
-files are left out of the coverage number. Only the test call phase is traced;
+site-packages. Only the test call phase is traced;
 fixtures are not.
 
 ## Limits

@@ -59,6 +59,7 @@ h3 { margin: 18px 0 6px; font-size: 12px; letter-spacing: .08em; text-transform:
 .lg { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: -6px; vertical-align: -2px; }
 .lg.cur { background: var(--cur); } .lg.vis { background: var(--ran-bg); border: 1px solid var(--ran); }
 .lg.chg { background: var(--chg); } .lg.miss { border: 2px dashed var(--miss); }
+.legend .linkish { margin-left: auto; background: none; border: 0; padding: 2px 0; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 11px; }
 .desk-tabs { display: flex; gap: 4px; }
 .desk-tabs button { background: none; border: 0; padding: 4px 8px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--muted); border-radius: 6px; }
 .desk-tabs button.on { background: var(--panel-2); color: var(--text); }

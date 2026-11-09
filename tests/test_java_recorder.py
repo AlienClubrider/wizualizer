@@ -94,6 +94,9 @@ def run(repo, source, test_id, max_steps=10_000):
     return make_trace(JavaRecorder(), source, RecordRequest(test_id, repo, repo, max_steps), changes, info)
 
 
+FOCUS = "OrderService.placeOrder"  # the PR changed it, and it is the first function the test calls
+
+
 def check_shop_trace(trace):
     assert trace["meta"]["outcome"] == "passed" and trace["meta"]["language"] == "java"
     s = trace["coverage"]["summary"]
@@ -116,6 +119,11 @@ def check_shop_trace(trace):
     assert line["locals"]["this.coupons"].startswith('{"WELCOME10"=Coupon(code="WELCOME10"')
     calls = [s for s in steps if s["kind"] == "call" and fn_of(s) == "Pricing.shippingCents"]
     assert calls[0]["args"] == {"subtotalCents": "7020", "weightG": "2050"}
+    # the test method is tagged as test code; the viewer opens on the first changed function it reaches
+    test_fn = frames["1"]["fn"]
+    assert fns[test_fn]["test"] and fns[test_fn]["qualname"] == "OrderServiceTest.orderOver50ShipsFreeWithCoupon"
+    assert [f["test"] for k, f in fns.items() if k != test_fn] == [False] * (len(fns) - 1)
+    assert fns[trace["meta"]["focus"]]["qualname"] == FOCUS
     # every frame closes, and lines are ones the debugger reported inside the method
     assert sum(s["kind"] == "call" for s in steps) == sum(s["kind"] == "return" for s in steps)
 

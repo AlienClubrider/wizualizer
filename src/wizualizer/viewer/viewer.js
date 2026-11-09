@@ -2,9 +2,19 @@
 (() => {
   'use strict';
   const T = JSON.parse(document.getElementById('trace').textContent);
-  const steps = T.steps, frames = T.frames, fns = T.functions, files = T.files, cov = T.coverage;
-  const N = steps.length;
+  const frames = T.frames, fns = T.functions, files = T.files, cov = T.coverage;
   const $ = (id) => document.getElementById(id);
+  // The test only drives the code under test: its own steps are hidden unless asked for
+  // (wiz run --test-steps, or the toggle, which reloads with #test=1).
+  const hashArgs = new URLSearchParams(location.hash.slice(1));
+  const wantTest = hashArgs.has('test') ? hashArgs.get('test') === '1' : !!T.meta.show_test_steps;
+  const isTestFrame = (id) => !!fns[frames[id].fn].test;
+  const prodSteps = T.steps.filter((s) => !isTestFrame(s.frame));
+  const hideTest = !wantTest && prodSteps.length > 0;
+  const steps = hideTest ? prodSteps : T.steps;
+  const N = steps.length;
+  const TEST_ACTOR = 'test';
+  const actorOf = (id) => (hideTest && isTestFrame(id) ? TEST_ACTOR : frames[id].actor);
   const NS = 'http://www.w3.org/2000/svg';
   const narrow = () => window.matchMedia('(max-width: 860px)').matches;
 
@@ -70,9 +80,9 @@
     const open = {};
     steps.forEach((s, i) => {
       const f = frames[s.frame];
-      const p = f.parent != null ? frames[f.parent] : null;
+      const p = f.parent != null ? { actor: actorOf(f.parent) } : null;
       if (s.kind === 'call') {
-        addActor(p ? p.actor : f.actor);
+        addActor(p ? p.actor : actorOf(s.frame));
         addActor(f.actor);
         if (p) {
           const fn = fns[f.fn];
@@ -302,7 +312,7 @@
       const w = Math.min(COL - 10, name.length * 7.4 + 20);
       h('rect', { x: ax(a) - w / 2, y: 6, width: w, height: 28, rx: 6 }, g);
       h('text', { x: ax(a), y: 24, 'text-anchor': 'middle' }, g, name);
-      h('title', {}, g, a);
+      h('title', {}, g, a === TEST_ACTOR ? `${T.meta.test} (its own steps are hidden)` : a);
     }
     const svg = h('svg', { class: 'sq', viewBox: `0 0 ${W} ${H}`, width: W, height: H }, host);
     const defs = h('defs', {}, svg);
@@ -470,7 +480,7 @@
       `Changes since ${d.base || 'base'} (${d.merge_base || '?'}…${d.head || '?'}). Tap a line to jump to it. ` +
       (isJava ? '"class load" lines (static fields and blocks) run when the class loads, not in the test. '
         : '"import" lines run when the module loads, not in the test. ') +
-      (cov.skipped_test_files.length ? `Test files are not counted: ${cov.skipped_test_files.join(', ')}.` : ''));
+      (cov.skipped_test_files.length ? `Test changes, not counted: ${cov.skipped_test_files.join(', ')}.` : ''));
     for (const [file, statuses] of Object.entries(cov.files)) {
       const rank = { not_run: 0, ran: 1, import_time: 2, neutral: 3 };
       const entries = Object.entries(statuses).map(([l, st]) => [+l, st]).sort((a, b) => rank[a[1]] - rank[b[1]] || a[0] - b[0]);
@@ -623,9 +633,17 @@
       else if (k === 'End') go(N - 1);
       else if (k === 'n') nextChange();
     });
-    const startAt = new URLSearchParams(location.hash.slice(1)).get('step');
+    const tt = $('b-test');
+    if (prodSteps.length && prodSteps.length < T.steps.length) {
+      tt.textContent = hideTest ? 'show test steps' : 'hide test steps';
+      tt.addEventListener('click', () => { location.hash = `test=${hideTest ? 1 : 0}`; location.reload(); });
+    } else tt.hidden = true;
+
+    // Open on the function under test: its first call, so the flowchart and variables start there.
+    const startAt = hashArgs.get('step');
+    const focusAt = hideTest && T.meta.focus ? steps.findIndex((s) => fnIdOfStep(s) === T.meta.focus) : -1;
     setSide('code');
-    go(startAt ? +startAt : 0);
+    go(startAt ? +startAt : Math.max(0, focusAt));
   }
   init();
   window.wiz = { go, setView, setSide, setPlaying, get step() { return cur; }, steps: N };
