@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wizualizer"
+version = "0.1.0"
+description = "Step through the code a PR changes, from its tests: flowchart, variables, sequence diagram."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest==9.2.0"]
+
+[project.scripts]
+wiz = "wizualizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"wizualizer.viewer" = ["*.html", "*.js", "*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

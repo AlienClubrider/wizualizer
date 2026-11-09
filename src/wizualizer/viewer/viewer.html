@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<meta name="referrer" content="no-referrer">
+<title>__TITLE__</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<header class="top">
+  <div class="title">
+    <span class="brand">wiz</span>
+    <span id="test-id" class="test-id"></span>
+    <span id="outcome" class="chip"></span>
+  </div>
+  <button id="cov-meter" class="cov-meter" type="button" aria-label="Open PR changed-line coverage"></button>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button role="tab" data-view="flow" class="on">Flow</button>
+  <button role="tab" data-view="vars">Vars</button>
+  <button role="tab" data-view="seq">Calls</button>
+  <button role="tab" data-view="code">Code</button>
+  <button role="tab" data-view="cov">PR lines</button>
+</nav>
+
+<main class="grid" id="grid">
+  <section class="panel p-flow on" data-view="flow">
+    <div class="panel-head">
+      <h2>Flowchart</h2>
+      <select id="fn-select" aria-label="Function shown in the flowchart"></select>
+      <span class="zoom"><button data-zoom="flow" data-dir="-1" aria-label="Zoom out">−</button><button data-zoom="flow" data-dir="1" aria-label="Zoom in">+</button></span>
+    </div>
+    <div class="scroll" id="flow"></div>
+    <div class="legend"><span class="lg cur"></span>now <span class="lg vis"></span>ran <span class="lg chg"></span>PR changed <span class="lg miss"></span>PR, never ran</div>
+  </section>
+
+  <section class="panel p-vars" data-view="vars">
+    <div class="panel-head"><h2>Variables</h2><span id="frame-name" class="muted ellip"></span></div>
+    <div class="scroll pad">
+      <table class="vars" id="vars"></table>
+      <h3>Call stack</h3>
+      <ol class="stack" id="stack"></ol>
+    </div>
+  </section>
+
+  <section class="panel p-seq" data-view="seq">
+    <div class="panel-head">
+      <h2>Sequence</h2>
+      <span class="zoom"><button data-zoom="seq" data-dir="-1" aria-label="Zoom out">−</button><button data-zoom="seq" data-dir="1" aria-label="Zoom in">+</button></span>
+    </div>
+    <div class="scroll" id="seq"></div>
+  </section>
+
+  <section class="panel p-code" data-view="code">
+    <div class="panel-head">
+      <h2 class="desk-tabs"><button data-side="code" class="on">Source</button><button data-side="cov">PR lines</button></h2>
+      <span id="code-file" class="muted ellip"></span>
+    </div>
+    <div class="scroll code" id="code"></div>
+    <div class="scroll pad" id="cov" hidden></div>
+  </section>
+</main>
+
+<footer class="controls" id="controls">
+  <div class="caption" id="caption" aria-live="polite"></div>
+  <input type="range" id="scrub" min="0" value="0" aria-label="Step">
+  <div class="buttons">
+    <button id="b-first" aria-label="First step">⏮</button>
+    <button id="b-back" aria-label="Step back">◀</button>
+    <button id="b-play" class="play" aria-label="Play">▶</button>
+    <button id="b-fwd" aria-label="Step forward">▶︎|</button>
+    <button id="b-next-change" class="text" aria-label="Next changed line">next Δ</button>
+    <select id="speed" aria-label="Speed">
+      <option value="0.5">0.5×</option><option value="1" selected>1×</option>
+      <option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+    </select>
+    <span id="counter" class="counter"></span>
+  </div>
+</footer>
+
+<script type="application/json" id="trace">__TRACE_JSON__</script>
+<script>/*__JS__*/</script>
+</body>
+</html>

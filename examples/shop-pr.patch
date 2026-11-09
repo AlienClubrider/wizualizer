@@ -1,0 +1,80 @@
+diff --git a/shop/orders.py b/shop/orders.py
+index aa57fc2..d6f6ed9 100644
+--- a/shop/orders.py
++++ b/shop/orders.py
+@@ -26,5 +26,5 @@ class OrderService:
+         subtotal = cart.subtotal_cents()
+         coupon = self.coupons.get(request.get("coupon"))
+         discount = coupon_discount_cents(subtotal, coupon, self.today)
+-        shipping = shipping_cents(subtotal, cart.weight_g())
++        shipping = shipping_cents(subtotal - discount, cart.weight_g())
+         return Receipt(subtotal, discount, shipping, subtotal - discount + shipping)
+diff --git a/shop/pricing.py b/shop/pricing.py
+index 5f4c2f2..c7041be 100644
+--- a/shop/pricing.py
++++ b/shop/pricing.py
+@@ -1,7 +1,10 @@
+ from dataclasses import dataclass
+ from datetime import date
+ 
++FREE_SHIPPING_FROM_CENTS = 5_000
+ BASE_SHIPPING_CENTS = 499
++HEAVY_PARCEL_G = 20_000
++HEAVY_SURCHARGE_CENTS = 1_500
+ 
+ 
+ class CouponNotApplicable(ValueError):
+@@ -13,6 +16,7 @@ class Coupon:
+     code: str
+     percent_off: int
+     expires: date
++    min_subtotal_cents: int = 0
+ 
+ 
+ def coupon_discount_cents(subtotal_cents, coupon, today):
+@@ -20,8 +24,15 @@ def coupon_discount_cents(subtotal_cents, coupon, today):
+         return 0
+     if today > coupon.expires:
+         raise CouponNotApplicable(f"{coupon.code} expired on {coupon.expires}")
++    if subtotal_cents < coupon.min_subtotal_cents:
++        raise CouponNotApplicable(f"{coupon.code} needs a subtotal of {coupon.min_subtotal_cents}")
+     return subtotal_cents * coupon.percent_off // 100
+ 
+ 
+ def shipping_cents(subtotal_cents, weight_g):
+-    return BASE_SHIPPING_CENTS
++    if subtotal_cents >= FREE_SHIPPING_FROM_CENTS:
++        return 0
++    cost = BASE_SHIPPING_CENTS
++    if weight_g > HEAVY_PARCEL_G:
++        cost += HEAVY_SURCHARGE_CENTS
++    return cost
+diff --git a/tests/test_orders.py b/tests/test_orders.py
+index ee30a95..aec78bc 100644
+--- a/tests/test_orders.py
++++ b/tests/test_orders.py
+@@ -14,11 +14,11 @@ def service():
+         Product("BEANS", "Coffee beans 1kg", 2_400, 1_000),
+         Product("GRINDER", "Hand grinder", 6_500, 900),
+     ])
+-    coupons = [Coupon("WELCOME10", 10, expires=date(2026, 12, 31))]
++    coupons = [Coupon("WELCOME10", 10, expires=date(2026, 12, 31), min_subtotal_cents=3_000)]
+     return OrderService(catalog, coupons, today=date(2026, 11, 9))
+ 
+ 
+-def test_order_with_coupon(service):
++def test_order_over_50_ships_free_with_coupon(service):
+     receipt = service.place_order({
+         "lines": [{"sku": "MUG", "qty": 2}, {"sku": "BEANS", "qty": 1}, {"sku": "MUG", "qty": 1}],
+         "coupon": "WELCOME10",
+@@ -26,8 +26,8 @@ def test_order_with_coupon(service):
+ 
+     assert receipt.subtotal_cents == 7_800
+     assert receipt.discount_cents == 780
+-    assert receipt.shipping_cents == 499
+-    assert receipt.total_cents == 7_519
++    assert receipt.shipping_cents == 0
++    assert receipt.total_cents == 7_020
+ 
+ 
+ def test_small_order_pays_shipping(service):
