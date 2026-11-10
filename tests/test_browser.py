@@ -84,7 +84,7 @@ def test_viewer_steps_into_over_and_out_of_calls(shop_trace, tmp_path):
         title: document.getElementById('test-id').textContent }));
       const r = { start: await at() };
       if (phone) await page.click('#tabs button[data-view="flow"]');
-      const chip = page.locator('.callchip').first();
+      const chip = page.locator('.callchip.real').first();
       r.chip = await chip.locator('text').textContent();
       await chip.click();
       r.into = await at();
@@ -111,6 +111,54 @@ def test_viewer_steps_into_over_and_out_of_calls(shop_trace, tmp_path):
         assert r["deeper"]["depth"] >= 2
         assert r["crumb"]["depth"] == 1 and r["crumb"]["crumbs"] == ["OrderService.place_order"]
         assert r["stack"]["depth"] == 1
+
+
+def test_viewer_opens_the_real_code_of_a_mocked_call(mocked_trace, tmp_path):
+    page = tmp_path / "v.html"
+    page.write_text(render_html(mocked_trace))
+    got = browse(tmp_path, page.as_uri() + "#fn=app/checkout.py::Checkout.pay", """
+      const at = () => page.evaluate(() => ({ stand: wiz.stand, step: wiz.step, note: wiz.note,
+        crumbs: [...document.querySelectorAll('#crumbs button')].map((b) => b.textContent),
+        banner: document.getElementById('callnote').hidden ? '' : document.getElementById('callnote').innerText,
+        vars: document.getElementById('vars').textContent }));
+      if (phone) await page.click('#tabs button[data-view="flow"]');
+      const r = { start: await at() };
+      r.chips = await page.$$eval('#flow .callchip', (els) => els.map((e) => e.getAttribute('class') + ':' + e.dataset.name));
+      await page.click('#flow .callchip.stand[data-name="charge"]');
+      r.open = await at();
+      await page.locator('#crumbs button:not(.here)').last().click();
+      r.back = await at();
+      await page.click('#flow .callchip.stand[data-name="send_receipt"]');
+      r.stub = await at();
+      await page.click('#b-out');
+      r.out = await at();
+      await page.locator('#flow .callchip.lib, #flow .callchip.more').first().click();
+      r.lib = await at();
+      // into: from the line that calls the mock, into its real code, then on to the next line
+      await page.click('#flow .callchip.real[data-name="total"]');
+      await page.click('#b-out');
+      for (let k = 0; k < 12 && !(await at()).stand; k++) await page.click('#b-into');
+      r.into = await at();
+      await page.click('#b-into');
+      r.after = await at();
+      return r;
+    """)
+    for vp in ("desk", "phone"):
+        r = got[vp]
+        assert r["errors"] == []
+        assert "callchip stand:charge" in r["chips"] and "callchip stand:send_receipt" in r["chips"]
+        assert "callchip real:total" in r["chips"]
+        o = r["open"]
+        assert o["stand"] == "app/gateway.py:11" and o["crumbs"][-1] == "CardGateway.charge not run"
+        assert "Not run in this flow: replaced by a mock in the test" in o["banner"]
+        assert "account = 'ann', cents = 3" in o["banner"] and "the mock returned 'ok-1'" in o["banner"]
+        assert "account'ann'cents3the mock returned'ok-1'" in o["vars"]
+        assert r["back"]["stand"] is None and r["back"]["crumbs"][-1] == "Checkout.pay"
+        assert r["stub"]["stand"] == "app/gateway.py:17" and "replaced by a stub" in r["stub"]["banner"]
+        assert r["out"]["stand"] is None
+        assert r["lib"]["note"] and r["lib"]["banner"].startswith("×")
+        assert r["into"]["stand"] == "app/gateway.py:11"
+        assert r["after"]["stand"] is None and r["after"]["step"] == r["into"]["step"] + 1
 
 
 def test_viewer_opens_on_the_function_asked_for(shop_trace, tmp_path):

@@ -55,6 +55,8 @@ import java.util.Optional;
  */
 final class Recorder {
   static final int MAX_LOCALS = 40;
+  static final int MAX_CALLS = 3000;
+  static final String MOCK_ADVICE = "org.mockito.internal.creation.bytebuddy.MockMethodAdvice";
 
   // config
   private final Path root;
@@ -83,6 +85,21 @@ final class Recorder {
   private String[] pending; // exception unwinding: {type, message}
   private String outcome = "not run", message = "";
   private int nextFrame = 1;
+  // Calls from project code that run no project code (mocks, the JDK, libraries): one at a time.
+  private final List<Map<String, Object>> calls = new ArrayList<>();
+  private MethodEntryRequest anyEntry; // every method entry on the test's thread; on only while armed
+  private MethodEntryRequest adviceEntry; // Mockito's inline-mock advice: where a redefined method's arguments are
+  private boolean armed;
+  private Outside outside;
+
+  private static final class Outside {
+    Frame caller;
+    int depth; // stack depth of the called method
+    boolean byMethod; // match the exit by method alone (inline mocks report other depths)
+    Method method;
+    Map<String, Object> call; // null: hidden (class loading, invokedynamic plumbing)
+    MethodExitRequest exit;
+  }
 
   private record ClassInfo(String file, Outline outline) {}
 
@@ -129,11 +146,19 @@ final class Recorder {
       }
       List<Event> events = new ArrayList<>();
       set.forEach(events::add);
-      events.sort(Comparator.comparingInt(Recorder::order));
+      events.sort(Comparator.comparingInt(this::order));
       boolean dead = false;
+      try {
+        disarm(); // values are rendered by invoking JDK methods: no entry events while that runs
+      } catch (com.sun.jdi.VMDisconnectedException gone) {
+        break;
+      }
       for (Event e : events) {
         try {
           if (e instanceof ClassPrepareEvent cp) onPrepare(cp.referenceType());
+          else if (e instanceof MethodEntryEvent me && me.request() == anyEntry) onOutsideEntry(me);
+          else if (e instanceof MethodEntryEvent me && me.request() == adviceEntry) onMockAdvice(me);
+          else if (e instanceof MethodExitEvent mx && outside != null && mx.request() == outside.exit) onOutsideExit(mx);
           else if (e instanceof MethodEntryEvent me) onEntry(me);
           else if (e instanceof BreakpointEvent bp) onLine(bp);
           else if (e instanceof ExceptionEvent ex) onException(ex);
@@ -147,6 +172,7 @@ final class Recorder {
       }
       if (dead) break;
       try {
+        arm();
         set.resume();
       } catch (com.sun.jdi.VMDisconnectedException gone) {
         break;
@@ -161,13 +187,13 @@ final class Recorder {
     }
   }
 
-  private static int order(Event e) {
+  private int order(Event e) {
     if (e instanceof ClassPrepareEvent) return 0;
-    if (e instanceof MethodEntryEvent) return 1;
-    if (e instanceof BreakpointEvent) return 2;
-    if (e instanceof ExceptionEvent) return 3;
-    if (e instanceof MethodExitEvent) return 4;
-    return 5;
+    if (e instanceof MethodEntryEvent) return e.request() == anyEntry ? 2 : 1; // after a project frame opens
+    if (e instanceof BreakpointEvent) return 3;
+    if (e instanceof ExceptionEvent) return 4;
+    if (e instanceof MethodExitEvent) return 5;
+    return 6;
   }
 
   // project code ------------------------------------------------------------------------------
@@ -286,13 +312,25 @@ final class Recorder {
       r.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
       r.enable();
     }
+    anyEntry = erm.createMethodEntryRequest();
+    anyEntry.addThreadFilter(t);
+    anyEntry.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
+    windowRequests.add(anyEntry);
+    adviceEntry = erm.createMethodEntryRequest();
+    adviceEntry.addClassFilter(MOCK_ADVICE);
+    adviceEntry.addThreadFilter(t);
+    adviceEntry.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
+    windowRequests.add(adviceEntry);
   }
 
   private void closeWindow() {
     if (windowDone) return;
     windowOpen = false;
     windowDone = true;
+    armed = false;
     try {
+      if (outside != null && outside.exit != null) erm.deleteEventRequest(outside.exit);
+      outside = null;
       erm.deleteEventRequests(windowRequests);
       erm.deleteAllBreakpoints();
       erm.deleteEventRequests(erm.classPrepareRequests());
@@ -318,6 +356,7 @@ final class Recorder {
     Outline.Method src = sourceMethod(m);
     if (src == null) return;
     int depth = thread.frameCount();
+    if (!isLambda(m)) outsideEnded(depth);
     unwind(depth, false);
     Frame f;
     Map<String, Value> raw;
@@ -357,6 +396,11 @@ final class Recorder {
     Outline.Method src = sourceMethod(e.method());
     if (src == null) return;
     int depth = thread.frameCount();
+    if (outside != null && depth > outside.depth && outside.call != null
+        && e.method().name().equals(outside.method.name())) {
+      outside.call.put("proxied", true); // a proxy (Spring, a spy) passing the call on to real code
+    }
+    outsideEnded(depth - 1);
     unwind(depth, true);
     enter(e.method(), src, depth);
   }
@@ -365,6 +409,7 @@ final class Recorder {
     if (!windowOpen || !e.thread().equals(thread) || isLambda(e.method())) return;
     Outline.Method src = sourceMethod(e.method());
     if (src == null) return;
+    if (outside == null || !e.method().equals(outside.method)) outsideEnded(thread.frameCount());
     // Match by method, not stack depth: instrumented methods (Mockito inline mocks) can report
     // a different depth on entry and exit. Anything above the frame exited by an exception.
     Frame f = findOnStack(src);
@@ -406,6 +451,179 @@ final class Recorder {
     s.put("type", type);
     s.put("message", text);
     emit(s);
+  }
+
+  // calls that run no project code -------------------------------------------------------------
+  /** Watch for the next call the top project frame makes, unless one is in progress. */
+  private void arm() {
+    boolean want = windowOpen && outside == null && !stack.isEmpty() && calls.size() < MAX_CALLS;
+    if (want != armed && anyEntry != null) {
+      if (want) anyEntry.enable();
+      else anyEntry.disable();
+      armed = want;
+    }
+  }
+
+  private void disarm() {
+    if (armed) {
+      anyEntry.disable();
+      armed = false;
+    }
+  }
+
+  private static boolean plumbing(Method m) {
+    String t = m.declaringType().name();
+    boolean superCtor = m.isConstructor() && (t.equals("java.lang.Object") || t.equals("java.lang.Record") || t.equals("java.lang.Enum"));
+    return m.isStaticInitializer() || superCtor || t.startsWith("java.lang.invoke.")
+        || t.startsWith("jdk.internal.") || t.startsWith("sun.") || t.contains("$$Lambda")
+        || m.name().equals("loadClass");
+  }
+
+  /**
+   * A method entered below the top project frame while armed. The direct callee, if it is not
+   * project code (a mock, the JDK, a library), or a project method that a Mockito inline mock
+   * stood in for, is recorded as a call; anything else is skipped until it returns.
+   */
+  private void onOutsideEntry(MethodEntryEvent e) throws IncompatibleThreadStateException {
+    if (!windowOpen || !e.thread().equals(thread) || outside != null) return;
+    Method m = e.method();
+    Frame top = stack.peek();
+    if (top == null) return;
+    int depth = thread.frameCount();
+    if (depth <= top.depth) return; // the project frame opened for this very call
+    boolean project = sourceMethod(m) != null;
+    // An inline mock's method reports one extra frame on entry (Mockito's dispatcher).
+    boolean inlineMock = project && depth <= top.depth + 2;
+    Outside o = new Outside();
+    o.caller = top;
+    o.depth = depth;
+    o.method = m;
+    o.byMethod = inlineMock;
+    if (inlineMock || (depth == top.depth + 1 && !project && !plumbing(m))) o.call = describe(m, top, inlineMock);
+    MethodExitRequest x = erm.createMethodExitRequest();
+    x.addClassFilter(m.declaringType());
+    x.addThreadFilter(thread);
+    x.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
+    x.enable();
+    o.exit = x;
+    outside = o;
+    if (inlineMock && o.call != null && ((Map<?, ?>) o.call.get("args")).isEmpty()) adviceEntry.enable();
+  }
+
+  /** Mockito's inline advice handles a call: its last argument holds the mocked method's arguments. */
+  private void onMockAdvice(MethodEntryEvent e) throws IncompatibleThreadStateException {
+    if (!e.method().name().equals("handle")) return;
+    adviceEntry.disable();
+    if (outside == null || outside.call == null) return;
+    List<Value> av;
+    try {
+      av = thread.frame(0).getArgumentValues();
+    } catch (com.sun.jdi.InternalException ignored) {
+      return;
+    }
+    if (av.isEmpty() || !(av.get(av.size() - 1) instanceof com.sun.jdi.ArrayReference arr)) return;
+    Outline.Method src = sourceMethod(outside.method);
+    List<Value> items = arr.getValues();
+    values.setThread(thread);
+    Map<String, Object> args = new LinkedHashMap<>();
+    for (int i = 0; i < items.size(); i++) {
+      String name = src != null && src.params().size() == items.size() ? src.params().get(i) : "arg" + i;
+      args.put(name, values.render(items.get(i)));
+    }
+    outside.call.put("args", args);
+  }
+
+  private Map<String, Object> describe(Method m, Frame caller, boolean inlineMock) throws IncompatibleThreadStateException {
+    Map<String, Object> c = new LinkedHashMap<>();
+    ObjectReference self = null;
+    List<Value> argValues = List.of();
+    int line = caller.line;
+    int n = thread.frameCount();
+    for (int i = 0; i < Math.min(4, n); i++) {
+      StackFrame jf = thread.frame(i);
+      if (!jf.location().method().equals(m)) continue;
+      try {
+        self = jf.thisObject();
+        argValues = jf.getArgumentValues();
+      } catch (com.sun.jdi.InternalException | com.sun.jdi.InvalidStackFrameException ignored) {
+        // redefined (inline mocks) or native: no arguments to show
+      }
+      if (i + 1 < n) line = lineOf(thread.frame(i + 1).location(), caller.line);
+      break;
+    }
+    String type = m.declaringType().name();
+    boolean mock = inlineMock;
+    if (self != null) {
+      String runtime = self.referenceType().name();
+      int k = runtime.indexOf("$MockitoMock$");
+      if (k > 0) {
+        type = runtime.substring(0, k);
+        mock = true;
+      }
+    }
+    c.put("frame", caller.id);
+    c.put("line", line);
+    c.put("after", steps.size() - 1);
+    c.put("name", m.isConstructor() ? "new " + Values.simple(type) : m.name());
+    c.put("type", type);
+    c.put("arity", m.argumentTypeNames().size());
+    List<String> names = new ArrayList<>();
+    try {
+      for (LocalVariable v : m.arguments()) names.add(v.name());
+    } catch (AbsentInformationException ignored) {
+      // no debug info (the JDK, generated mocks): the source's names if it is project code, else arg0, arg1, ...
+      Outline.Method src = sourceMethod(m);
+      if (src != null && src.params().size() == argValues.size()) names.addAll(src.params());
+    }
+    values.setThread(thread);
+    Map<String, Object> args = new LinkedHashMap<>();
+    for (int i = 0; i < argValues.size(); i++) {
+      args.put(i < names.size() ? names.get(i) : "arg" + i, values.render(argValues.get(i)));
+    }
+    c.put("args", args);
+    if (mock) c.put("mock", true);
+    return c;
+  }
+
+  private void onOutsideExit(MethodExitEvent e) throws IncompatibleThreadStateException {
+    if (!e.thread().equals(thread) || !e.method().equals(outside.method)) return;
+    if (!outside.byMethod && thread.frameCount() != outside.depth) return;
+    Outside o = outside;
+    erm.deleteEventRequest(o.exit);
+    o.exit = null;
+    if (o.call != null) {
+      Value v;
+      if (o.method.isConstructor()) v = thread.frame(0).thisObject();
+      else v = o.method.returnTypeName().equals("void") ? null : e.returnValue();
+      values.setThread(thread);
+      boolean isVoid = v == null && o.method.returnTypeName().equals("void");
+      o.call.put("value", isVoid ? "void" : values.render(v));
+    }
+    finishOutside();
+  }
+
+  /** The call in progress is over if the stack is back at its caller's depth (it threw, or no exit came). */
+  private void outsideEnded(int depth) {
+    if (outside == null || depth >= outside.depth) return;
+    if (outside.call != null && !outside.call.containsKey("value")) {
+      outside.call.put("raised", true);
+      outside.call.put("error", pending == null ? "Throwable" : pending[0] + (pending[1].isEmpty() ? "" : ": " + pending[1]));
+    }
+    if (outside.exit != null) {
+      try {
+        erm.deleteEventRequest(outside.exit);
+      } catch (RuntimeException ignored) {
+        // VM gone
+      }
+    }
+    finishOutside();
+  }
+
+  private void finishOutside() {
+    if (adviceEntry != null) adviceEntry.disable();
+    Map<String, Object> c = outside.call;
+    outside = null;
+    if (c != null && !c.containsKey("proxied") && calls.size() < MAX_CALLS) calls.add(c);
   }
 
   // frames ------------------------------------------------------------------------------------
@@ -599,6 +817,7 @@ final class Recorder {
     rec.put("steps", steps);
     rec.put("frames", frames);
     rec.put("functions", functions);
+    rec.put("calls", calls);
     rec.put("truncated", truncated);
     rec.put("test", test);
     Files.writeString(out, Json.write(rec), StandardCharsets.UTF_8);

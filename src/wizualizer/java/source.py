@@ -7,7 +7,7 @@ import hashlib
 import json
 from typing import Callable
 
-from ..ports import Statement
+from ..ports import Declaration, Statement
 from .flowchart import build_flowchart
 from .helper import OutlineServer, find_jdk
 
@@ -40,6 +40,15 @@ class JavaSource:
     def statements(self, source: str) -> list[Statement]:
         out = self.outline(source)
         return [Statement(first, (lo, hi), bool(meas)) for first, lo, hi, meas in out.get("statements", [])]
+
+    def declarations(self, source: str) -> list[Declaration]:
+        out = self.outline(source)
+        types = out.get("types", {})
+        return [
+            Declaration(m["name"], f"{m['cls']}.{m['name']}", m["line"], m["cls"].rsplit(".", 1)[-1],
+                        tuple(types.get(m["cls"], ())), tuple(m.get("params", ())))
+            for m in out.get("methods", []) if not m.get("ctor")
+        ]
 
     def flowchart(self, source: str, function_line: int) -> dict | None:
         for method in self.outline(source).get("methods", []):

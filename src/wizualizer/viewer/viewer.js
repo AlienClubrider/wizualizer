@@ -65,6 +65,37 @@
     });
   }
 
+  // Calls that ran no project code (T.calls): into a mock or stub (with the project function(s) it
+  // stood for, c.targets) or into a library. c.pos: the step they came after, in `steps`.
+  const origOf = [];
+  T.steps.forEach((s, i) => { if (!hideTest || !isTestFrame(s.frame)) origOf.push(i); });
+  const posOf = (after) => {
+    let lo = 0, hi = origOf.length - 1, k = 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (origOf[m] <= after) { k = m; lo = m + 1; } else hi = m - 1; }
+    return k;
+  };
+  const outside = (T.calls || [])
+    .filter((c) => frames[c.frame] && !(hideTest && isTestFrame(c.frame)))
+    .map((c) => ({ ...c, pos: posOf(c.after), fn: frames[c.frame].fn, targets: (c.targets || []).filter((t) => fns[t]) }));
+  const outsideAt = {}; // step -> calls made after it
+  for (const c of outside) (outsideAt[c.pos] = outsideAt[c.pos] || []).push(c);
+  const isStandIn = (c) => c.targets.length > 0;
+  const shortName = (c) => (c.name.startsWith('new ') ? c.name.slice(4) : c.name);
+  const ownerOf = (c) => (c.type ? c.type.replace(/\$/g, '.').split('.').pop() : '');
+  const whyNotRun = (c) => (c.mock ? 'replaced by a mock in the test' : c.stub ? 'replaced by a stub in the test'
+    : 'the call never reached this code');
+  const stoodIn = (c) => (c.mock ? 'the mock' : c.stub ? 'the stub' : 'it');
+  const argsText = (c) => Object.entries(c.args || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
+  const resultText = (c) => (c.raised ? `raised ${c.error || 'an exception'}` : 'value' in c ? c.value : 'not recorded (built-in function)');
+  const callLabel = (c) => {
+    const own = ownerOf(c);
+    return `${own && !c.name.startsWith('new ') && own !== c.name ? own + '.' : ''}${c.name}(${argsText(c)})`;
+  };
+  const srcLines = {};
+  const nodeSource = (file, n) => (srcLines[file] = srcLines[file] || (files[file] ? files[file].source.split('\n') : []))
+    .slice(n.lines[0] - 1, n.lines[1]).join(' ');
+  const callsIn = (text, name) => new RegExp(`(^|[^\\w$])${name.replace(/[$]/g, '\\$')}\\s*\\(`).test(text);
+
   const fnKey = (fid) => `${fns[fid].file}::${fns[fid].qualname}`;
   // "pkg.QuoteTest#quotes" or "tests/test_x.py::TestA::test_b" -> "QuoteTest › quotes", "TestA › test_b"
   const testLabel = (t) => {
@@ -75,7 +106,9 @@
     return cls ? `${cls} › ${name}` : name;
   };
   const depthAt = (i) => stackAt[i].length;
-  // Calls made from each flowchart node: fnId -> nodeId -> [{callee, steps: [call step indices]}]
+  // Calls from each flowchart node: fnId -> nodeId -> chips, real calls first:
+  // {kind: 'real', callee, steps: [call step indices]}, then calls that ran no project code,
+  // {kind: 'stand' (a mock or stub stood in for project code) | 'lib', name, calls: [outside calls]}.
   const callsFrom = {};
   function callsOf(fnId, flow) {
     if (callsFrom[fnId]) return callsFrom[fnId];
@@ -88,8 +121,26 @@
       const callee = fnIdOfStep(steps[j]);
       const list = (out[node] = out[node] || []);
       let entry = list.find((c) => c.callee === callee);
-      if (!entry) list.push((entry = { callee, steps: [] }));
+      if (!entry) list.push((entry = { kind: 'real', callee, steps: [] }));
       entry.steps.push(j);
+    }
+    const more = {};
+    for (const c of outside) {
+      if (c.fn !== fnId) continue;
+      const node = flow.nodeFor(c.line);
+      if (node === null || node === undefined) continue;
+      const stand = isStandIn(c);
+      // Library calls only where the source spells them (not autoboxing, string concatenation, ...).
+      if (!stand && !callsIn(nodeSource(fns[fnId].file, flow.fc.nodes[node]), shortName(c))) continue;
+      const list = (more[node] = more[node] || []);
+      const key = `${stand ? 'stand' : 'lib'}:${c.name}:${c.targets.join(',')}`;
+      let entry = list.find((e) => e.key === key);
+      if (!entry) list.push((entry = { kind: stand ? 'stand' : 'lib', key, name: c.name, calls: [] }));
+      entry.calls.push(c);
+    }
+    for (const [node, list] of Object.entries(more)) {
+      list.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'stand' ? -1 : 1));
+      out[node] = (out[node] || []).concat(list);
     }
     return (callsFrom[fnId] = out);
   }
@@ -112,7 +163,7 @@
   const addActor = (a) => { if (!(a in actorIdx)) { actorIdx[a] = actors.length; actors.push(a); } };
   {
     let last = -1;
-    const open = {};
+    const open = {}, stands = [];
     steps.forEach((s, i) => {
       const f = frames[s.frame];
       const p = f.parent != null ? { actor: actorOf(f.parent) } : null;
@@ -135,8 +186,22 @@
         last = messages.length - 1;
       }
       msgAt[i] = last;
+      // A mock or stub that stood in for project code: a call to it and its answer, after this step.
+      for (const c of outsideAt[i] || []) {
+        if (!isStandIn(c)) continue;
+        const from = actorOf(c.frame);
+        const to = c.mock ? `mock ${ownerOf(c) || c.name}` : c.stub ? `stub ${c.name}` : ownerOf(c) || c.name;
+        addActor(from);
+        addActor(to);
+        const args = Object.values(c.args || {}).map((v) => clip(v, 18));
+        stands.push({ actor: to, start: messages.length, end: messages.length + 1, done: true, level: 0 });
+        messages.push({ step: i, from, to, label: `${c.name}(${args.join(', ')})`, kind: 'call', stand: c });
+        messages.push({ step: i, from: to, to: from, label: c.raised ? `raises ${c.error || ''}` : `→ ${resultText(c)}`,
+          kind: c.raised ? 'raise' : 'ret', stand: c });
+        last = messages.length - 1;
+      }
     });
-    messages.activations = Object.values(open);
+    messages.activations = Object.values(open).concat(stands);
   }
 
   // ---- flowchart ------------------------------------------------------------
@@ -192,10 +257,26 @@
     const nodeFor = nodeLookup(fc);
     const start = fc.nodes.find((n) => n.kind === 'start').id;
     const end = fc.nodes.find((n) => n.kind === 'end').id;
-    const calls = callsOf(fnId, { nodeFor, start });
-    const CALL_CH = 6.6, MAX_CHIPS = 3;
-    const chipText = (c) => `↘ ${fns[c.callee].name}${c.steps.length > 1 ? ` ×${c.steps.length}` : ''}`;
-    const chipW = (c) => Math.min(20 + chipText(c).length * CALL_CH, 220);
+    const calls = callsOf(fnId, { nodeFor, start, fc });
+    const CALL_CH = 6.6, MAX_CHIPS = 4;
+    const times = (n) => (n > 1 ? ` ×${n}` : '');
+    const chipText = (c) => {
+      if (c.kind === 'real') return `↘ ${fns[c.callee].name}${times(c.steps.length)}`;
+      if (c.kind === 'stand') return `↘ ${c.name}${times(c.calls.length)} · ${c.calls[0].mock ? 'mock' : c.calls[0].stub ? 'stub' : 'not run'}`;
+      if (c.kind === 'lib') return `${c.name}()${times(c.calls.length)}`;
+      return `+${c.rest.length} call${c.rest.length === 1 ? "" : "s"}`;
+    };
+    const chipW = (c) => Math.min(20 + chipText(c).length * CALL_CH, 240);
+    const chipsOf = (all) => {
+      if (narrow()) {
+        // A phone has no room for every library call: one chip for all of them.
+        const libs = all.filter((c) => c.kind === 'lib'), rest = all.filter((c) => c.kind !== 'lib');
+        return libs.length ? [...rest, { kind: 'more', rest: libs }] : rest;
+      }
+      if (all.length <= MAX_CHIPS) return all;
+      const rest = all.slice(MAX_CHIPS - 1);
+      return [...all.slice(0, MAX_CHIPS - 1), { kind: 'more', rest }];
+    };
     const edgesAll = fc.edges.map((e) => ({ ...e, r1: e.from, r2: e.to }));
     const back = edgesAll.filter((e) => e.to <= e.from);
     const fwd = edgesAll.filter((e) => e.to > e.from + 1);
@@ -206,7 +287,7 @@
       const hex = n.kind === 'decision' || n.kind === 'loop';
       const w = Math.min(Math.max(n.label.length * CH + (hex ? 40 : 26), 64), 440);
       const st = status(n);
-      const chips = (calls[n.id] || []).slice(0, MAX_CHIPS);
+      const chips = chipsOf(calls[n.id] || []);
       const callW = chips.reduce((a, c) => a + chipW(c) + 6, 0);
       return { x: leftPad + n.depth * INDENT, y: 12 + i * ROW, w, hex, st, badge: st === 'miss' ? 70 : st ? 18 : 0, chips, callW };
     });
@@ -265,13 +346,29 @@
       // A chip per function this node calls: tap it to step into that call.
       let cx = p.x + p.w + p.badge + 8;
       for (const c of p.chips) {
-        const w = chipW(c), callee = fns[c.callee];
-        const cg = h('g', { class: 'callchip', tabindex: 0, role: 'button', 'aria-label': `Step into ${callee.qualname}` }, svg);
-        h('title', {}, cg, `Step into ${callee.qualname} (${c.steps.length} call${c.steps.length === 1 ? '' : 's'} from here)`);
+        const w = chipW(c);
+        let label, tip;
+        if (c.kind === 'real') {
+          const callee = fns[c.callee];
+          label = `Step into ${callee.qualname}`;
+          tip = `${label} (${c.steps.length} call${c.steps.length === 1 ? '' : 's'} from here)`;
+        } else if (c.kind === 'stand') {
+          const first = c.calls[0], target = fns[first.targets[0]];
+          label = `Open ${target.qualname}: not run in this flow, ${whyNotRun(first)}`;
+          tip = `${label}\n${callLabel(first)} → ${resultText(first)}`;
+        } else if (c.kind === 'lib') {
+          label = `Show what ${c.name} was called with and returned`;
+          tip = c.calls.slice(0, 3).map((k) => `${callLabel(k)} → ${resultText(k)}`).join('\n');
+        } else {
+          label = `${c.rest.length} more call${c.rest.length === 1 ? '' : 's'} from here: tap for what each got and gave back`;
+          tip = c.rest.map((k) => (k.kind === 'real' ? fns[k.callee].name : k.name)).join(', ');
+        }
+        const cg = h('g', { class: `callchip ${c.kind}`, tabindex: 0, role: 'button', 'aria-label': label, 'data-name': c.kind === 'real' ? fns[c.callee].name : c.name || '' }, svg);
+        h('title', {}, cg, tip);
         h('rect', { class: 'hit', x: cx - 3, y: p.y - 7, width: w + 6, height: NH + 14 }, cg); // a bigger tap target
         h('rect', { class: 'pill', x: cx, y: p.y + 3, width: w, height: NH - 6, rx: (NH - 6) / 2 }, cg);
         h('text', { x: cx + 10, y: p.y + NH / 2 + 4 }, cg, clip(chipText(c), Math.floor((w - 16) / CALL_CH)));
-        const follow = (ev) => { ev.stopPropagation(); followCall(c); };
+        const follow = (ev) => { ev.stopPropagation(); useChip(c); };
         cg.addEventListener('click', follow);
         cg.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); follow(ev); } });
         cx += w + 6;
@@ -289,20 +386,31 @@
 
   // ---- state ------------------------------------------------------------------
   let cur = 0, playing = false, timer = null, pinnedFn = '', shownFlow = null;
+  // stand: the project code a mock or stub stood for, shown statically ({call, target});
+  // note: library calls whose arguments and results are on show ({calls, reals}).
+  let stand = null, note = null;
   const zoom = { flow: null, seq: 1 };
 
   // ---- render: flowchart --------------------------------------------------------
   function renderFlow() {
     const s = steps[cur];
-    const fnId = pinnedFn || fnIdOfStep(s);
+    const fnId = stand ? stand.target : pinnedFn || fnIdOfStep(s);
     const flow = buildFlow(fnId);
     const host = $('flow');
+    host.classList.toggle('static', !!stand);
     if (shownFlow !== flow) {
       host.replaceChildren(flow.wrap);
       shownFlow = flow;
       applyZoom('flow');
+      if (stand) host.scrollTop = 0;
     }
     if (!flow.svg) return;
+    if (stand) {
+      // Not run: no step lit, nothing visited.
+      flow.nodes.forEach((g) => g.classList.remove('visited', 'cur', 'boom'));
+      for (const p of Object.values(flow.edges)) { p.classList.remove('hot'); p.setAttribute('marker-end', flow.edgeMarker(false)); }
+      return;
+    }
     const visited = new Set();
     for (let j = 0; j <= cur; j++) if (fnIdOfStep(steps[j]) === fnId) { const n = nodeAtStep(j, flow); if (n !== null) visited.add(n); }
     const here = fnIdOfStep(s) === fnId ? nodeAtStep(cur, flow) : null;
@@ -382,7 +490,7 @@
       h('rect', { class: 'act', x: ax(act.actor) - 4 + act.level * 5, y: y1, width: 8, height: Math.max(6, y2 - y1), rx: 2 }, svg);
     }
     const els = messages.map((m, k) => {
-      const g = h('g', { class: `msg ${m.kind === 'call' ? 'call' : m.kind === 'raise' ? 'ret raise' : 'ret'}` }, svg);
+      const g = h('g', { class: `msg ${m.kind === 'call' ? 'call' : m.kind === 'raise' ? 'ret raise' : 'ret'}${m.stand ? ' stand' : ''}` }, svg);
       const y = rowY(k), x1 = ax(m.from), x2 = ax(m.to);
       const marker = m.kind === 'raise' ? 'sa-raise' : 'sa';
       let shape;
@@ -398,7 +506,7 @@
         h('line', { class: 'hit', x1, y1: y, x2, y2: y }, g);
       }
       h('title', {}, g, m.label);
-      g.addEventListener('click', () => follow(m.step));
+      g.addEventListener('click', () => (m.stand ? openStand(m.stand) : follow(m.step)));
       return { g, shape, marker, y };
     });
     seqView = { svg, head, W, H, HH, els, rowY };
@@ -407,7 +515,7 @@
 
   function renderSeq() {
     if (!seqView) buildSeq();
-    const k = msgAt[cur];
+    const k = stand ? messages.findIndex((m) => m.stand === stand.call) : msgAt[cur];
     seqView.els.forEach((e, j) => {
       e.g.classList.toggle('future', j > k);
       e.g.classList.toggle('cur', j === k);
@@ -422,9 +530,19 @@
     $('frame-name').textContent = `${fn.qualname} · ${fn.file}:${s.line}`;
     const tbl = $('vars');
     tbl.replaceChildren();
-    const snap = snapAt[cur], prev = prevSnapAt[cur];
+    if (stand) {
+      const c = stand.call, t = fns[stand.target];
+      $('frame-name').textContent = `${t.qualname} · not run in this flow`;
+      const args = Object.entries(c.args || {});
+      if (!args.length) h('tr', { class: 'empty' }, tbl).appendChild(h('td', { colspan: 2 }, null, 'Called with no arguments'));
+      for (const [k, v] of args) { const tr = h('tr', {}, tbl); h('td', { class: 'n' }, tr, k); h('td', {}, tr, v); }
+      const tr = h('tr', { class: c.raised ? 'exc' : 'ret' }, tbl);
+      h('td', { class: 'n' }, tr, `${stoodIn(c)} ${c.raised ? 'raised' : 'returned'}`);
+      h('td', {}, tr, c.raised ? c.error || '' : resultText(c));
+    }
+    const snap = stand ? {} : snapAt[cur], prev = stand ? null : prevSnapAt[cur];
     const names = Object.keys(snap);
-    if (!names.length && s.kind !== 'return' && s.kind !== 'exception') h('tr', { class: 'empty' }, tbl).appendChild(h('td', { colspan: 2 }, null, 'No local variables yet'));
+    if (!stand && !names.length && s.kind !== 'return' && s.kind !== 'exception') h('tr', { class: 'empty' }, tbl).appendChild(h('td', { colspan: 2 }, null, 'No local variables yet'));
     for (const name of names) {
       const isNew = prev && !(name in prev);
       const isChanged = prev && name in prev && prev[name] !== snap[name];
@@ -435,12 +553,12 @@
       if (isChanged) h('span', { class: 'was' }, tv, prev[name]);
       tv.appendChild(document.createTextNode(snap[name]));
     }
-    if (s.kind === 'return') {
+    if (s.kind === 'return' && !stand) {
       const tr = h('tr', { class: s.raised ? 'exc' : 'ret' }, tbl);
       h('td', { class: 'n' }, tr, s.raised ? 'raises' : s.yield ? 'yields' : 'returns');
       h('td', {}, tr, s.raised ? `${s.type}: ${s.message}` : s.value);
     }
-    if (s.kind === 'exception') {
+    if (s.kind === 'exception' && !stand) {
       const tr = h('tr', { class: 'exc' }, tbl);
       h('td', { class: 'n' }, tr, 'raised');
       h('td', {}, tr, `${s.type}: ${s.message}`);
@@ -483,8 +601,9 @@
 
   function renderCode() {
     const s = steps[cur];
-    const file = peek ? peek.file : fnOfStep(s).file;
-    const line = peek ? peek.line : s.line;
+    const at = stand ? { file: fns[stand.target].file, line: fns[stand.target].line } : peek;
+    const file = at ? at.file : fnOfStep(s).file;
+    const line = at ? at.line : s.line;
     const view = buildCode(file);
     const host = $('code');
     if (shownFile !== file) { host.replaceChildren(view.wrap); shownFile = file; }
@@ -492,7 +611,7 @@
     if (view.lastCur) view.lastCur.classList.remove('cur');
     const row = view.rows[line - 1];
     if (row) {
-      if (!peek) { row.classList.add('cur'); view.lastCur = row; }
+      if (!at) { row.classList.add('cur'); view.lastCur = row; }
       else { row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash'); }
       const y = row.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
       keepInView(host, 0, y, 0, row.offsetHeight);
@@ -572,6 +691,14 @@
   function renderCaption() {
     const s = steps[cur], fn = fnOfStep(s), cap = $('caption');
     cap.replaceChildren();
+    if (stand) {
+      const t = fns[stand.target];
+      h('span', { class: 'k' }, cap, `${t.qualname} · ${t.file.split('/').pop()}:${t.line}  `);
+      h('span', { class: 'x' }, cap, `not run: ${whyNotRun(stand.call)}`);
+      $('counter').textContent = `step ${cur + 1} / ${N}`;
+      $('scrub').value = cur;
+      return;
+    }
     const where = `${fn.qualname} · ${fn.file.split('/').pop()}:${s.line}`;
     h('span', { class: 'k' }, cap, where + '  ');
     if (s.kind === 'call') h('span', {}, cap, s.resume ? 'resumes' : 'called');
@@ -593,12 +720,18 @@
     nav.replaceChildren();
     const st = stackAt[cur];
     st.forEach((fid, k) => {
-      const fn = fns[frames[fid].fn], last = k === st.length - 1;
+      const fn = fns[frames[fid].fn], last = k === st.length - 1 && !stand;
       if (k) h('span', { class: 'sep', 'aria-hidden': 'true' }, nav, '›');
       const b = h('button', { type: 'button', class: last ? 'here' : '', 'aria-current': last ? 'step' : null,
         title: last ? `${fn.qualname} (now)` : `Back to ${fn.qualname}, at its call` }, nav, fn.qualname);
       if (!last) b.addEventListener('click', () => goToFrame(fid));
     });
+    if (stand) {
+      h('span', { class: 'sep', 'aria-hidden': 'true' }, nav, '›');
+      const b = h('button', { type: 'button', class: 'here', 'aria-current': 'step', title: `${fns[stand.target].qualname} (not run in this flow)` }, nav,
+        fns[stand.target].qualname);
+      h('small', { class: 'notrun' }, b, ' not run');
+    }
     nav.hidden = !st.length;
     const here = nav.querySelector('.here');
     if (here) nav.scrollLeft = nav.scrollWidth;
@@ -607,6 +740,7 @@
   function render() {
     renderCaption();
     renderCrumbs();
+    renderNote();
     renderFlow();
     renderVars();
     renderSeq();
@@ -617,6 +751,8 @@
   function go(i) {
     cur = Math.max(0, Math.min(N - 1, i));
     peek = null;
+    stand = null;
+    note = null;
     render();
   }
   function setPlaying(on) {
@@ -653,20 +789,111 @@
   function goToFrame(fid) {
     for (let j = cur; j >= 0; j--) if (steps[j].frame === fid) return follow(j);
   }
-  function stepInto() { setPlaying(false); go(cur + 1); }
+  // Into: a mock or stub called after this step comes first (its real code, statically), then the next step.
+  function stepInto() {
+    setPlaying(false);
+    const here = (outsideAt[cur] || []).filter(isStandIn);
+    const next = here[stand ? here.indexOf(stand.call) + 1 : 0];
+    if (next) return openStand(next);
+    go(cur + 1);
+  }
   function stepOver() {
     setPlaying(false);
+    stand = null;
     const d = depthAt(cur);
     for (let j = cur + 1; j < N; j++) if (depthAt(j) <= d) return go(j);
+    render();
     nothingMore('b-over');
   }
   function stepOut() {
     setPlaying(false);
+    if (stand) return closeStand();
     const d = depthAt(cur), fid = steps[cur].frame;
     for (let j = cur + 1; j < N; j++) if (depthAt(j) < d) return follow(j);
     for (let j = N - 1; j > cur; j--) if (steps[j].frame === fid) return go(j); // caller hidden: its return
     nothingMore('b-out');
   }
+  // ---- calls that ran no project code --------------------------------------------------------
+  // Of several calls a chip stands for, the one from the frame on screen, at or after the current step.
+  function pickCall(list) {
+    const here = steps[cur].frame;
+    const mine = list.filter((c) => c.frame === here);
+    return mine.find((c) => c.pos >= cur) ?? mine[mine.length - 1] ?? list.find((c) => c.pos >= cur) ?? list[0];
+  }
+  function useChip(c) {
+    if (c.kind === 'real') followCall(c);
+    else if (c.kind === 'stand') openStand(pickCall(c.calls));
+    else if (c.kind === 'lib') showNote(c.calls, []);
+    else showNote(c.rest.flatMap((k) => (k.kind === 'real' ? [] : k.calls)), c.rest.filter((k) => k.kind === 'real'));
+  }
+  // Show the project code a mock or stub stood for, at the step the call came after.
+  function openStand(c, k = 0) {
+    setPlaying(false);
+    if (pinnedFn) { pinnedFn = ''; $('fn-select').value = ''; }
+    cur = c.pos;
+    peek = null;
+    note = null;
+    stand = { call: c, target: c.targets[k] };
+    if (narrow() && !$('tabs').querySelector('[data-view="flow"].on')) setView('flow');
+    else render();
+  }
+  function closeStand() {
+    stand = null;
+    render();
+  }
+  function showNote(calls, reals) {
+    const here = steps[cur].frame;
+    note = { calls: [...calls].sort((a, b) => (b.frame === here) - (a.frame === here) || Math.abs(a.pos - cur) - Math.abs(b.pos - cur)), reals };
+    renderNote();
+  }
+  function renderNote() {
+    const box = $('callnote');
+    box.replaceChildren();
+    box.className = 'callnote';
+    box.hidden = !stand && !note;
+    if (!stand && !note) return;
+    const close = h('button', { type: 'button', class: 'x', 'aria-label': stand ? 'Back to the caller' : 'Close' }, box, '×');
+    close.addEventListener('click', () => { if (stand) closeStand(); else { note = null; renderNote(); } });
+    if (stand) {
+      const c = stand.call;
+      box.classList.add('stand');
+      const head = h('p', {}, box);
+      h('b', {}, head, 'Not run in this flow: ');
+      head.appendChild(document.createTextNode(`${whyNotRun(c)}. This is the code the call stands for.`));
+      const vals = h('p', { class: 'vals' }, box);
+      vals.appendChild(document.createTextNode('Called with '));
+      h('code', {}, vals, argsText(c) || 'no arguments');
+      vals.appendChild(document.createTextNode(` · ${stoodIn(c)} ${c.raised ? 'raised' : 'returned'} `));
+      h('code', {}, vals, c.raised ? c.error || '' : resultText(c));
+      if (c.targets.length > 1) {
+        const pick = h('p', { class: 'pick' }, box, 'Implementations: ');
+        c.targets.forEach((t, k) => {
+          const b = h('button', { type: 'button', class: t === stand.target ? 'on' : '', 'aria-pressed': String(t === stand.target) }, pick, fns[t].qualname);
+          b.addEventListener('click', () => openStand(c, k));
+        });
+      }
+      return;
+    }
+    box.classList.add('lib');
+    const all = note.calls;
+    if (all.some((c) => !isStandIn(c))) h('p', { class: 'muted' }, box, 'Not project code: what the call got and gave back.');
+    for (const c of all.slice(0, 6)) {
+      const row = h('p', { class: 'vals' }, box);
+      h('code', {}, row, callLabel(c));
+      row.appendChild(document.createTextNode(' → '));
+      h('code', {}, row, resultText(c));
+      if (isStandIn(c)) {
+        const b = h('button', { type: 'button', class: 'open' }, row, `↘ open (${c.mock ? 'mock' : c.stub ? 'stub' : 'not run'})`);
+        b.addEventListener('click', () => openStand(c));
+      }
+    }
+    if (all.length > 6) h('p', { class: 'muted' }, box, `+${all.length - 6} more like these`);
+    for (const r of note.reals) {
+      const b = h('button', { type: 'button', class: 'open' }, h('p', { class: 'vals' }, box), `↘ ${fns[r.callee].name}`);
+      b.addEventListener('click', () => followCall(r));
+    }
+  }
+
   function nothingMore(id) {
     const b = $(id), text = b.textContent;
     b.textContent = 'end';
@@ -756,6 +983,7 @@
       else if (k === 'i' || (k === 'F11' && !e.shiftKey)) { e.preventDefault(); stepInto(); }
       else if (k === 'o' || k === 'F10') { e.preventDefault(); stepOver(); }
       else if (k === 'u' || (k === 'F11' && e.shiftKey)) { e.preventDefault(); stepOut(); }
+      else if (k === 'Escape' && (stand || note)) { if (stand) closeStand(); else { note = null; renderNote(); } }
     });
     const tt = $('b-test');
     if (prodSteps.length && prodSteps.length < T.steps.length) {
@@ -772,5 +1000,6 @@
   }
   init();
   window.wiz = { go, setView, setSide, setPlaying, stepInto, stepOver, stepOut, get step() { return cur; }, steps: N,
-    get fn() { return fnIdOfStep(steps[cur]); }, get depth() { return depthAt(cur); } };
+    get fn() { return fnIdOfStep(steps[cur]); }, get depth() { return depthAt(cur); },
+    get stand() { return stand ? stand.target : null; }, get note() { return note ? note.calls.map(callLabel) : null; } };
 })();

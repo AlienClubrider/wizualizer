@@ -23,6 +23,9 @@ plus discovery and a change probe (`languages.py`).
   what is missing to run them.
 - `discovery.py`: tests as flows. pytest `--collect-only`; Java by reading
   test sources.
+- `call_targets.py`: which project function a mocked or stubbed call stood
+  for (pure rules: the called type's method or its implementations'). The
+  `SourceModel` port's `declarations()` feeds it.
 - `functions.py`: the functions under test and their runs, labelled by the
   inputs that differ (pure rules). `python/entry.py` and `java/entry.py` read
   which production function each test calls from its source; a recording's

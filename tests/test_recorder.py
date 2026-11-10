@@ -160,3 +160,40 @@ def test_failing_test_is_recorded_as_failed(repo):
     rec = PythonRecorder().record(request)
     assert rec["test"]["outcome"] == "failed"
     assert rec["steps"][-1]["kind"] == "return" and rec["steps"][-1].get("raised")
+
+
+
+def outside_call(trace, name):
+    calls = [c for c in trace["calls"] if c["name"] == name]
+    assert len(calls) == 1, trace["calls"]
+    return calls[0]
+
+
+def test_mocked_call_points_at_the_real_code_with_its_arguments_and_result(mocked_trace):
+    t = mocked_trace
+    assert t["meta"]["outcome"] == "passed"
+    charge = outside_call(t, "charge")
+    assert charge["mock"] is True and charge["type"] == "app.gateway.PaymentGateway"
+    assert charge["args"] == {"account": "'ann'", "cents": "3"}  # named after the implementation's parameters
+    assert charge["value"] == "'ok-1'"
+    assert charge["targets"] == ["app/gateway.py:11"]  # the implementation, not the abstract method
+    impl = t["functions"]["app/gateway.py:11"]
+    assert impl["ran"] is False and impl["qualname"] == "CardGateway.charge" and impl["flowchart"]["nodes"]
+    assert "app/gateway.py" in t["files"]
+    caller = t["functions"][t["frames"][str(charge["frame"])]["fn"]]
+    assert caller["qualname"] == "Checkout.pay" and charge["line"] == 10
+
+
+def test_monkeypatched_function_is_a_stub_for_the_real_one(mocked_trace):
+    stub = outside_call(mocked_trace, "send_receipt")
+    assert stub.get("stub") is True and stub["targets"] == ["app/gateway.py:17"]
+    assert stub["args"] == {"email": "'ann@x'", "text": "'ok-1'"} and stub["value"] == "False"
+
+
+def test_real_calls_still_get_frames_and_library_calls_no_targets(mocked_trace):
+    t = mocked_trace
+    called = [t["functions"][t["frames"][str(s["frame"])]["fn"]]["qualname"] for s in t["steps"] if s["kind"] == "call"]
+    assert called == ["test_pay", "Checkout.__init__", "Checkout.pay", "Checkout.total"]
+    assert not [c for c in t["calls"] if c["name"] in ("pay", "total")]
+    upper = outside_call(t, "upper")
+    assert upper["type"] == "builtins.str" and "targets" not in upper

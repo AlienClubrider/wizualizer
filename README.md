@@ -74,6 +74,7 @@ access.
 
 - [CLI reference](docs/cli.md): commands, options, the viewer
 - [Only changed functions](docs/only-changes.md): how it works, limits
+- [Mocked and library calls](docs/mocked-calls.md): open the real code a mock stood for
 - [Java](docs/java.md): Maven/Gradle, big builds, why a recording fails
 - [Limits](docs/limits.md)
 - [Architecture](docs/architecture.md) and [trace format](docs/trace-format.md)

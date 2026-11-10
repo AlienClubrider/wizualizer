@@ -19,4 +19,5 @@
 - One recording at a time in the web app (builds do not share well).
 - Java specifics: [java.md](java.md#limits). Only-changes specifics:
   [only-changes.md](only-changes.md#limits).
+- Mocked and library calls: [mocked-calls.md](mocked-calls.md#limits).
 - Memory (heap) view is not built yet: [memory-view.md](memory-view.md).

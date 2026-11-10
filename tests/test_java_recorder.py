@@ -156,6 +156,114 @@ def test_step_budget_truncates(shop, source):
     assert trace["meta"]["truncated"] and len(trace["steps"]) == 15
 
 
+STOCK = """\
+package shop;
+
+public interface Stock {
+  boolean reserve(String sku, int qty);
+}
+"""
+WAREHOUSE = """\
+package shop;
+
+public class Warehouse implements Stock {
+  @Override
+  public boolean reserve(String sku, int qty) {
+    if (qty <= 0) {
+      return false;
+    }
+    return !sku.isEmpty();
+  }
+}
+"""
+RESERVATIONS = """\
+package shop;
+
+public class Reservations {
+  private final Stock stock;
+  private final Catalog catalog;
+
+  public Reservations(Stock stock, Catalog catalog) {
+    this.stock = stock;
+    this.catalog = catalog;
+  }
+
+  public String hold(String sku, int qty) {
+    Product p = catalog.get(sku);
+    boolean ok = stock.reserve(sku, qty);
+    return ok ? p.name().toUpperCase() : "none";
+  }
+}
+"""
+RESERVATIONS_TEST = """\
+package shop;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import org.junit.jupiter.api.Test;
+
+class ReservationsTest {
+  @Test
+  void holdsWhatTheStockReserves() {
+    Stock stock = mock(Stock.class);
+    Catalog catalog = mock(Catalog.class);
+    when(stock.reserve("MUG", 2)).thenReturn(true);
+    when(catalog.get("MUG")).thenReturn(new Product("MUG", "Enamel mug", 1_800, 350));
+    assertEquals("ENAMEL MUG", new Reservations(stock, catalog).hold("MUG", 2));
+  }
+}
+"""
+MOCKITO = """
+    <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><version>5.17.0</version><scope>test</scope></dependency>
+    <dependency><groupId>net.bytebuddy</groupId><artifactId>byte-buddy</artifactId><version>1.17.8</version><scope>test</scope></dependency>
+    <dependency><groupId>net.bytebuddy</groupId><artifactId>byte-buddy-agent</artifactId><version>1.17.8</version><scope>test</scope></dependency>
+  </dependencies>"""
+
+
+@pytest.fixture(scope="module")
+def mocked_shop(tmp_path_factory):
+    """The Java shop with a Mockito test: an interface mock and a mock of a class (Mockito's inline mocks)."""
+    repo = tmp_path_factory.mktemp("java-mocked")
+    shutil.copytree(EXAMPLES / "java-shop", repo, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target"))
+    pom = repo / "pom.xml"
+    pom.write_text(pom.read_text().replace("\n  </dependencies>", MOCKITO, 1))
+    main, test = repo / "src/main/java/shop", repo / "src/test/java/shop"
+    (main / "Stock.java").write_text(STOCK)
+    (main / "Warehouse.java").write_text(WAREHOUSE)
+    (main / "Reservations.java").write_text(RESERVATIONS)
+    (test / "ReservationsTest.java").write_text(RESERVATIONS_TEST)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    return repo
+
+
+def test_mocked_calls_point_at_the_real_code_with_arguments_and_results(mocked_shop, source):
+    trace = make_trace(JavaRecorder(), source, RecordRequest("shop.ReservationsTest#holdsWhatTheStockReserves",
+                                                             mocked_shop, mocked_shop))
+    assert trace["meta"]["outcome"] == "passed", trace["meta"]
+    fns, frames = trace["functions"], trace["frames"]
+    hold = next(k for k, f in fns.items() if f["qualname"] == "Reservations.hold")
+    from_hold = [c for c in trace["calls"] if frames[str(c["frame"])]["fn"] == hold]
+    by_name = {c["name"]: c for c in from_hold}
+    # an interface mock: resolved to the one implementation, arguments named from its source
+    reserve = by_name["reserve"]
+    assert reserve["mock"] and reserve["type"] == "shop.Stock" and reserve["value"] == "true"
+    assert reserve["args"] == {"sku": '"MUG"', "qty": "2"}
+    assert [fns[t]["qualname"] for t in reserve["targets"]] == ["Warehouse.reserve"]
+    assert fns[reserve["targets"][0]]["ran"] is False and fns[reserve["targets"][0]]["flowchart"]
+    # a class mocked inline: the class's own method, which did not run
+    get = by_name["get"]
+    assert get["mock"] and get["args"] == {"sku": '"MUG"'} and get["value"].startswith('Product(sku="MUG"')
+    assert [fns[t]["qualname"] for t in get["targets"]] == ["Catalog.get"]
+    # JDK calls: values, no target
+    upper = by_name["toUpperCase"]
+    assert upper["type"] == "java.lang.String" and upper["value"] == '"ENAMEL MUG"' and "targets" not in upper
+    # real calls are unchanged: frames of their own
+    called = [fns[frames[str(s["frame"])]["fn"]]["qualname"] for s in trace["steps"] if s["kind"] == "call"]
+    assert "Reservations.hold" in called and "Catalog.get" not in called and "Warehouse.reserve" not in called
+
+
 def test_unknown_test_method_fails_clearly(shop):
     with pytest.raises(RecordingFailed, match="did not run"):
         JavaRecorder().record(RecordRequest("shop.OrderServiceTest#nope", shop, shop))

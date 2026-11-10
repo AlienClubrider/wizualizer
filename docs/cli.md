@@ -89,6 +89,11 @@ that made the call. **↘ into** steps to the next step (into a call if the line
 makes one), **↷ over** to the next line of the same function, **↗ out** back
 to the caller.
 
+A call that ran no project code has a chip too: dashed for a mock or stub
+(tap it to open the real code it stood for, marked "not run"), grey for the
+JDK or a library (tap it for its arguments and result). See
+[mocked-calls.md](mocked-calls.md).
+
 Keys: space play/pause, ← → step, `i`/`o`/`u` (or F11, F10, Shift+F11) into,
 over and out, Home/End, `n` next changed line. The ☾/☀
 button switches dark and light (remembered; follows the system until you pick).

@@ -184,3 +184,25 @@ def test_builder_on_a_hand_written_outline():
     assert ("continue;", "while (n > 0)", None) in e
     assert ("while (n > 0)", "if (n == 2)", "yes") in e
     assert ("while (n > 0)", "return n;", "no") in e
+
+
+@needs_jdk
+def test_declarations_say_what_each_class_extends_and_implements(src):
+    java = (
+        "package bank;\n"
+        "public class AccountServiceImpl extends Base<String> implements AccountService, java.io.Serializable {\n"
+        "  public AccountServiceImpl() {}\n"
+        "  @Override\n"
+        "  public void updateBalance(String accountNumber, java.math.BigDecimal newBalance) {\n"
+        "    save(accountNumber);\n"
+        "  }\n"
+        "  abstract static class Inner implements Runnable { public void run() {} }\n"
+        "}\n"
+    )
+    got = {(d.qualname, d.line, d.owner, d.supers, d.params) for d in src.declarations(java)}
+    assert got == {
+        ("AccountServiceImpl.updateBalance", 4, "AccountServiceImpl", ("Base", "AccountService", "Serializable"),
+         ("accountNumber", "newBalance")),
+        ("AccountServiceImpl.Inner.run", 8, "Inner", ("Runnable",), ()),
+    }
+    assert src.flowchart(java, 4) is not None

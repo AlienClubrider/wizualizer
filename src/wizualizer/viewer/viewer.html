@@ -37,8 +37,9 @@
       <span class="zoom"><button data-zoom="flow" data-dir="-1" aria-label="Zoom out">−</button><button data-zoom="flow" data-dir="1" aria-label="Zoom in">+</button></span>
     </div>
     <nav class="crumbs" id="crumbs" aria-label="Call path: tap a caller to go back to its call"></nav>
+    <div class="callnote" id="callnote" role="status" hidden></div>
     <div class="scroll" id="flow"></div>
-    <div class="legend"><span class="lg cur"></span>now <span class="lg vis"></span>ran <span class="lg chg"></span>PR changed <span class="lg miss"></span>PR, never ran <span class="lg call"></span>tap to step into <button id="b-test" class="linkish" type="button"></button></div>
+    <div class="legend"><span class="lg cur"></span>now <span class="lg vis"></span>ran <span class="lg chg"></span>PR changed <span class="lg miss"></span>PR, never ran <span class="lg call"></span>tap to step into <span class="lg stand"></span>mock → real code <span class="lg lib"></span>library → values <button id="b-test" class="linkish" type="button"></button></div>
   </section>
 
   <section class="panel p-vars" data-view="vars">

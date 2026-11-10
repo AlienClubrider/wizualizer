@@ -57,12 +57,28 @@ class Statement:
     measurable: bool  # False if it runs at import time, not inside a function
 
 
+@dataclass(frozen=True)
+class Declaration:
+    """A function or method with a body: what a call that ran no project code is matched against."""
+
+    name: str  # as code calls it: "update_balance", "updateBalance"
+    qualname: str  # "AccountServiceImpl.updateBalance"
+    line: int  # the line flowchart(source, line) takes
+    owner: str = ""  # simple name of the enclosing class; "" for a module-level function
+    supers: tuple[str, ...] = ()  # simple names of the types the owner extends or implements
+    params: tuple[str, ...] = ()  # parameter names, without self/cls
+
+
 class SourceModel(Protocol):
     language: str
 
     def handles(self, path: str) -> bool: ...
 
     def statements(self, source: str) -> list[Statement]: ...
+
+    def declarations(self, source: str) -> list[Declaration]:
+        """Every function and method with a body, for matching calls to mocks and stubs."""
+        ...
 
     def flowchart(self, source: str, function_line: int) -> dict | None:
         """Flowchart of the function whose definition starts at function_line."""

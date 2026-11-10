@@ -80,3 +80,15 @@ def test_match_statement():
     src = "def f(x):\n    match x:\n        case 1:\n            a()\n        case _:\n            b()\n"
     e = edges(chart(src))
     assert ("match x", "case 1", None) in e and ("case 1", "case _", "no") in e
+
+
+def test_declarations_of_functions_and_methods_skip_abstract_ones():
+    src = (
+        "import abc\n\n"
+        "class Gateway(abc.ABC):\n    @abc.abstractmethod\n    def charge(self, account, cents): ...\n\n"
+        "class Card(Gateway, Base):\n    @staticmethod\n    def charge(account, cents):\n        return 1\n\n"
+        "def send(email, *, text):\n    return True\n"
+    )
+    got = [(d.qualname, d.line, d.owner, d.supers, d.params) for d in PythonSource().declarations(src)]
+    assert got == [("Card.charge", 8, "Card", ("Gateway", "Base"), ("account", "cents")),
+                   ("send", 12, "", (), ("email", "text"))]

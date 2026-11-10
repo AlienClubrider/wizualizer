@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 
-from ..ports import Statement
+from ..ports import Declaration, Statement
 from .flowchart import build_flowchart
 
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -26,6 +26,19 @@ class PythonSource:
         _collect(tree.body, in_function=False, out=out)
         return out
 
+    def declarations(self, source: str) -> list[Declaration]:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return []
+        out: list[Declaration] = []
+        for node in tree.body:
+            if isinstance(node, _FUNCS):
+                out.append(_declaration(node, None))
+            elif isinstance(node, ast.ClassDef):
+                out.extend(_declaration(f, node) for f in node.body if isinstance(f, _FUNCS) and not _abstract(f))
+        return out
+
     def flowchart(self, source: str, function_line: int) -> dict | None:
         try:
             tree = ast.parse(source)
@@ -35,6 +48,21 @@ class PythonSource:
             if isinstance(node, _FUNCS) and _def_start(node) == function_line:
                 return build_flowchart(node, source)
         return None
+
+
+def _declaration(fn, cls: ast.ClassDef | None) -> Declaration:
+    params = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)]
+    if cls is not None and params and params[0] in ("self", "cls"):
+        params = params[1:]
+    supers = tuple(b.id if isinstance(b, ast.Name) else b.attr for b in (cls.bases if cls else ())
+                   if isinstance(b, (ast.Name, ast.Attribute)))
+    return Declaration(fn.name, f"{cls.name}.{fn.name}" if cls else fn.name, _def_start(fn),
+                       cls.name if cls else "", supers, tuple(params))
+
+
+def _abstract(fn) -> bool:
+    return any((d.id if isinstance(d, ast.Name) else getattr(d, "attr", "")) == "abstractmethod"
+               for d in fn.decorator_list)
 
 
 def _def_start(node) -> int:

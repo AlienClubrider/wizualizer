@@ -70,6 +70,18 @@ A new required field, or a changed meaning, bumps `version`.
     { "kind": "return", "frame": 9, "line": 26, "raised": true, "type": "ValueError", "message": "…" }
   ],
 
+  // Calls from project code that ran no project code: into a mock or stub, the JDK, a library.
+  // Optional (older traces have none). See mocked-calls.md.
+  "calls": [
+    { "frame": 2, "line": 155, "after": 19,          // made by frame 2 at line 155, after steps[19]
+      "name": "updateBalance", "type": "com.bank.UserAccountService",  // the mocked type, else the declaring one
+      "arity": 2,                                     // Java: parameter count
+      "args": { "accountNumber": "\"111\"", "newBalance": "400" },
+      "value": "void",                                // or "raised": true, "error": "IllegalState: …"
+      "mock": true,                                   // or "stub": true (a test's function swapped in)
+      "targets": ["server/src/…/UserAccountServiceImpl.java:46"] }   // project code it stood for
+  ],
+
   // PR changed-line coverage; null without --base.
   "coverage": {
     "files": { "shop/pricing.py": { "27": "ran", "28": "not_run", "4": "import_time" } },
@@ -100,6 +112,14 @@ changes meaning. What the values look like:
   initializer, `else`, `try`, `finally`, `case` labels and closing braces are
   `neutral`: javac emits no code for them. Test files also include
   `*Test.java`, `*Tests.java`, `*IT.java` and anything under `test/`.
+
+## Calls that ran no project code
+
+`calls[].targets` are keys into `functions`: the project function(s) a mock or
+stub stood for. Those entries have `"ran": false` and no frames; their file is
+in `files`. Functions that ran have no `ran` field. `value` is missing when the
+recorder could not see the result (Python built-ins written in C). Calls made
+by test code are listed but never get `targets`.
 
 ## Test code and the function under test
 

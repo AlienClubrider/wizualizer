@@ -54,6 +54,7 @@ final class Outline {
 
   final List<Method> methods = new ArrayList<>();
   final List<Map<String, Object>> methodJson = new ArrayList<>();
+  final Map<String, List<String>> supers = new LinkedHashMap<>(); // "Outer.Inner" -> simple names it extends/implements
   final List<int[]> statements = new ArrayList<>(); // {first, lo, hi, measurable 0|1}
 
   private final CompilationUnitTree cu;
@@ -93,6 +94,7 @@ final class Outline {
   Map<String, Object> toJson() {
     Map<String, Object> out = new LinkedHashMap<>();
     out.put("methods", methodJson);
+    out.put("types", supers);
     List<Object> st = new ArrayList<>();
     for (int[] s : statements) st.add(List.of(s[0], s[1], s[2], s[3] == 1));
     out.put("statements", st);
@@ -326,6 +328,15 @@ final class Outline {
     public Void visitClass(ClassTree t, Boolean measurable) {
       String name = t.getSimpleName().toString();
       classes.push(name.isEmpty() ? (classes.isEmpty() ? "" : classes.peek()) + "$anon" : name);
+      List<Tree> parents = new ArrayList<>();
+      if (t.getExtendsClause() != null) parents.add(t.getExtendsClause());
+      parents.addAll(t.getImplementsClause());
+      List<String> names = new ArrayList<>();
+      for (Tree p : parents) {
+        String type = text(p).replaceAll("<.*", "").trim(); // drop type arguments
+        names.add(type.substring(type.lastIndexOf('.') + 1));
+      }
+      supers.put(String.join(".", reversed(classes)), names);
       try {
         for (Tree m : t.getMembers()) {
           if (m instanceof VariableTree v) {

@@ -61,8 +61,10 @@ when no Docker is reachable, instead of hanging.
 ## What gets recorded
 
 Methods whose source is in the project. JDK, libraries, JUnit, Mockito mocks
-and generated code (Lombok, record accessors, default constructors) are
-skipped like library code. Lambdas are folded into the method that contains
+and generated code (Lombok, record accessors, default constructors) get no
+frame; the calls project code makes into them are listed with their arguments
+and results, and a mocked call points at the project code it stood for
+([mocked-calls.md](mocked-calls.md)). Lambdas are folded into the method that contains
 them. Variables are the locals plus `this.<field>` for every field of `this`.
 Objects from the project show their fields; JDK collections and maps their
 items; `BigDecimal`, `java.time` and `UUID` their value; other library objects
