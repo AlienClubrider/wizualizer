@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wizualizer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Step through what your tests run: flowchart, variables, sequence diagram and changed-line coverage, in a local web app."
 readme = "README.md"
 requires-python = ">=3.12"

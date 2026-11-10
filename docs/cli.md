@@ -93,3 +93,22 @@ Keys: space play/pause, ← → step, `i`/`o`/`u` (or F11, F10, Shift+F11) into,
 over and out, Home/End, `n` next changed line. The ☾/☀
 button switches dark and light (remembered; follows the system until you pick).
 On a phone the views become tabs and the controls stick to the bottom.
+
+## Updating
+
+```sh
+uv tool upgrade wizualizer     # or: pipx upgrade wizualizer
+```
+
+For a git install, both fetch the repository again and reinstall from the
+newest commit, even when the version number is the same (checked with uv 0.13
+and pipx 1.18; pipx can still print "unchanged at version …"). `wiz
+--version` shows the version. To start clean, reinstall over the old one:
+
+```sh
+uv tool install --force git+https://github.com/AlienClubrider/wizualizer
+pipx install --force git+https://github.com/AlienClubrider/wizualizer
+```
+
+Recordings in `.wiz/` from an older wiz are kept and still open; delete the
+folder to re-record everything.

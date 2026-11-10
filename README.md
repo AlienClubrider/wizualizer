@@ -1,9 +1,10 @@
 # wizualizer
 
-See what your tests actually run. `wiz` lists every test in your project as a
-**flow**; open one to step through it as a flowchart, with variables, a call
-sequence and the source. On a branch with changes, show only the flows that
-run changed lines, and which changed lines no test reaches.
+See what your code does when its tests run. `wiz` lists the **functions under
+test** in your project, each with its runs (one per test, labelled by its
+inputs). Open a run to step through the function as a flowchart, with
+variables, a call sequence and the source, and step into the functions it
+calls. On a branch, show only the functions whose runs reach changed lines.
 
 ![A flow mid-play: flowchart, variables, calls, source](docs/screenshots/flowchart.png)
 
@@ -25,6 +26,15 @@ uv tool install git+https://github.com/AlienClubrider/wizualizer
 
 No runtime dependencies.
 
+## Update
+
+```sh
+uv tool upgrade wizualizer   # or: pipx upgrade wizualizer
+```
+
+Both reinstall from the latest commit, even when the version number did not
+change (pipx may still say "unchanged").
+
 ## Quick start
 
 ```sh
@@ -34,8 +44,9 @@ wiz
 
 `wiz` detects pytest, Maven or Gradle (and says what is missing if it finds
 neither), finds the tests and serves a page on `127.0.0.1` (it prints the URL).
-Click a flow: it is recorded once, cached in `.wiz/`, and opens in the viewer.
-Pre-record everything with `wiz record --all`.
+Pick a run: its test is recorded once, cached in `.wiz/`, and the viewer opens
+on that function. If a recording fails, wiz says why in one line, with a fix
+and the full build output. Pre-record everything with `wiz record --all`.
 
 For one test without the web app (CI, sharing a file):
 
@@ -45,14 +56,13 @@ wiz run tests/test_billing.py::test_refund --base main   # or com.acme.BankTest#
 
 It writes one self-contained `.wiz/<test>.html`.
 
-## Only changed flows
+## Only changed functions
 
-With a git diff (against the merge-base with `main`/`master` by default, or
-`--base REF`, plus uncommitted work), switch on **Only changed flows**. wiz runs
-the tests once, watching only the changed lines, and lists the tests that run
-them with a count per flow. Inside a flow, **PR lines** shows which changed
-lines ran and which never did. With no changes the switch is off and says why.
-`wiz list --changed` does the same in a terminal.
+With a git diff (against the merge-base with `main`/`master`, or `--base REF`,
+plus uncommitted work), switch on **Only changed functions**. wiz runs the
+tests once, watching only the changed lines. In the viewer, **PR lines** shows
+which changed lines ran and which never did. `wiz list --changed` does the same
+in a terminal.
 
 ## Privacy
 
@@ -63,8 +73,8 @@ access.
 ## Docs
 
 - [CLI reference](docs/cli.md): commands, options, the viewer
-- [Only changed flows](docs/only-changes.md): how it works, limits
-- [Java](docs/java.md): Maven/Gradle details, what is recorded
+- [Only changed functions](docs/only-changes.md): how it works, limits
+- [Java](docs/java.md): Maven/Gradle, big builds, why a recording fails
 - [Limits](docs/limits.md)
 - [Architecture](docs/architecture.md) and [trace format](docs/trace-format.md)
 - [Contributing](docs/contributing.md)
