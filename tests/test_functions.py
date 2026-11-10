@@ -40,6 +40,9 @@ def test_object_fields_reads_the_usual_shapes():
     assert object_fields("{'lines': [1, 2], 'coupon': None}") == [("lines", "[1, 2]"), ("coupon", "None")]
     assert object_fields('{"amount": 1000.00}') == [("amount", "1000.00")]
     assert object_fields("[1, 2]") is None and object_fields('"text"') is None and object_fields("f(1, 2)") is None
+    assert object_fields('Request("123", 100)') == [("0", '"123"'), ("1", "100")]
+    assert run_labels([(("r", 'Request("999", 100)'),), (("r", 'Request("123", 500)'),), (("r", 'Request("123", 100)'),)]) \
+        == ['"999", 100', '"123", 500', '"123", 100']
 
 
 def test_catalog_groups_runs_by_function_and_keeps_unplaced_tests_apart():

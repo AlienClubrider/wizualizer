@@ -191,7 +191,8 @@ def object_fields(text: str) -> list[tuple[str, str]] | None:
     else:
         return None
     fields = []
-    for item in split_top(inner):
+    items = split_top(inner)
+    for item in items:
         for sep in ("=", ":"):
             k, found, v = item.partition(sep)
             k = k.strip().strip("'\"")
@@ -199,7 +200,10 @@ def object_fields(text: str) -> list[tuple[str, str]] | None:
                 fields.append((k, v.strip()))
                 break
         else:
-            return None
+            fields = None
+            break
+    if fields is None and text[:1].isupper() and not text.startswith("{"):
+        fields = [(str(i), v) for i, v in enumerate(items)]  # Type("a", 1): fields by position
     return fields or None
 
 
