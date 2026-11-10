@@ -14,6 +14,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from .functions import recording_summary
 from .java.project import SKIP_DIRS
 
 # Files that cannot change what a test does: docs and images.
@@ -102,12 +103,14 @@ class Store:
             "steps": len(trace["steps"]),
             "truncated": meta["truncated"],
             "coverage": cov["summary"] if cov else None,
+            "functions": recording_summary(trace),
         }
         _write(self.dir / "flows" / "index.json", index)
         return path
 
     def index(self) -> dict[str, dict]:
-        """test id -> {key, outcome, steps, truncated, coverage} of its latest recording."""
+        """test id -> {key, outcome, steps, truncated, coverage, functions} of its latest recording
+        (functions: see functions.recording_summary)."""
         return _load(self.dir / "flows" / "index.json") or {}
 
     # ---- build logs of failed recordings -------------------------------------------------------

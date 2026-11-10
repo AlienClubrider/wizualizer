@@ -1,11 +1,11 @@
-# Only changed flows
+# Only changed functions
 
 With a git diff (against the base, see `--base` in [cli.md](cli.md), plus
-uncommitted and untracked files), the flows page offers **Only changed flows**.
-It shows just the tests whose run reaches a changed line, with the count
-(`Δ 3 lines`) and a `test changed` tag when the test's own file changed. Open
-one and the **PR lines** view shows which changed lines that test ran and which
-it never ran. Without changes the switch is disabled and says why.
+uncommitted and untracked files), the functions page offers **Only changed
+functions**. It shows just the functions with a run that reaches a changed
+line, and only those runs, with the count (`Δ 3`) and a `test changed` tag
+when the test's own file changed. Open a run and the **PR lines** view shows
+which changed lines it ran and which it never ran. Without changes the switch is disabled and says why.
 
 ## How it knows
 
@@ -31,5 +31,6 @@ Boot, Gradle) about 50 s.
 - A test that fails before reaching changed code is not listed.
 - Java: a change to a method signature alone is not detected (no statement
   runs on that line); test methods inherited from a base class are not
-  attributed; a build that forks a new JVM per test class (`forkEvery`,
-  `reuseForks=false`) is not supported.
+  attributed; a Maven build that forks a new JVM per test class
+  (`reuseForks=false`) is not supported (Gradle's `forkEvery` is turned off
+  for the run).

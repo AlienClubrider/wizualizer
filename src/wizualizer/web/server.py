@@ -1,4 +1,5 @@
-"""`wiz` web app: a local page listing every flow; opening one records it (once) and plays it back.
+"""`wiz` web app: a local page listing the functions under test and their runs; opening a run
+records its test (once) and plays it back on that function.
 
 Standard library only (http.server). Binds 127.0.0.1 only. Requests whose Host
 is not this server are refused (DNS rebinding), and every POST needs an
@@ -93,23 +94,30 @@ class App:
         jobs = self.jobs.snapshot()
         error = ""
         try:
-            flows = self.ws.flows(source_hash)
+            functions = self.ws.functions(source_hash)
+            flows = {f.id: f for f in self.ws.flows(source_hash)}
         except RecordingFailed as exc:
-            flows, error = [], str(exc)
+            functions, flows, error = [], {}, str(exc)
         scan = self.ws.cached_scan(source_hash, diff)
         out = []
-        for f in flows:
-            item = f.to_json()
-            item["cached"] = self.ws.cached(f, source_hash, diff)
-            job = jobs.get(f"record:{f.id}")
-            if job:
-                item["job"] = job
-            if scan is not None:
-                item["changed"] = scan["tests"].get(f.id)
-            out.append(item)
+        for fn in functions:
+            runs = []
+            for r in fn.runs:
+                flow = flows[r.flow_id]
+                run = {"id": r.flow_id, "label": r.label, "test": r.test, "group": flow.group, "file": flow.file,
+                       "recorded": r.recorded, "cached": self.ws.cached(flow, source_hash, diff)}
+                job = jobs.get(f"record:{r.flow_id}")
+                if job:
+                    run["job"] = job
+                if scan is not None:
+                    run["changed"] = scan["tests"].get(r.flow_id)
+                runs.append(run)
+            out.append({"key": fn.key, "name": fn.display, "signature": fn.signature, "file": fn.file,
+                        "line": fn.line, "language": fn.language, "via": fn.via, "known": fn.known, "runs": runs})
         return {
             "project": {**self.info, "error": error},
-            "flows": out,
+            "functions": out,
+            "tests": len(flows),
             "diff": diff.to_json(),
             "scan": {"ready": scan is not None, "job": jobs.get("scan")},
         }
@@ -174,9 +182,9 @@ def make_handler(app: App):
                 try:
                     trace = app.ws.trace(flow_id, record=False)
                 except KeyError:
-                    return self._html(f"<p>No test {escape(flow_id)} in this project. <a href='/'>All flows</a>",
+                    return self._html(f"<p>No test {escape(flow_id)} in this project. <a href='/'>All functions</a>",
                                       404)
-                if trace is None:  # not recorded yet: the flows page records it and comes back
+                if trace is None:  # not recorded yet: the functions page records it and comes back
                     return self._send(HTTPStatus.SEE_OTHER, b"", "text/plain",
                                       {"Location": "/?open=" + quote(flow_id, safe="")})
                 return self._html(render_html(trace, back_href="/"))

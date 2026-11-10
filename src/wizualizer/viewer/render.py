@@ -11,14 +11,14 @@ def asset(name: str) -> str:
 
 
 def render_html(trace: dict, back_href: str | None = None) -> str:
-    """back_href: when served by `wiz`, a link back to the flows list."""
+    """back_href: when served by `wiz`, a link back to the functions page."""
     template = asset("viewer.html")
     js = asset("viewer.js")
     data = json.dumps(trace, separators=(",", ":"))
     # Keep the JSON inert inside <script>: no "</script>" or "<!--" can end the block.
     data = data.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     title = escape(f"wiz · {trace['meta']['test']}")
-    back = f'<a class="back" href="{escape(back_href)}" aria-label="All flows">← flows</a>' if back_href else ""
+    back = f'<a class="back" href="{escape(back_href)}" aria-label="All functions">← functions</a>' if back_href else ""
     return (
         template.replace("/*__THEME_CSS__*/", asset("theme.css"))
         .replace("/*__CSS__*/", asset("viewer.css"))

@@ -13,6 +13,7 @@ from pathlib import Path
 from . import impact
 from .diff import FileChange, GitError, changed_lines, default_base, git_root
 from .discovery import Flow
+from .functions import Function, catalog
 from .languages import Language
 from .ports import RecordingFailed, RecordRequest
 from .store import Store
@@ -51,6 +52,7 @@ class Workspace:
         self.store = store or Store(root)
         self.store.ensure()
         self._flows: tuple[str, list[Flow]] | None = None  # (source hash, flows)
+        self._entries: tuple[str, dict] | None = None  # (source hash, flow id -> static entry point)
         self._lock = threading.Lock()
 
     # ---- flows ------------------------------------------------------------------------------
@@ -66,6 +68,21 @@ class Workspace:
                 found.extend(lang.discover())
             self._flows = (source_hash, found)
             return found
+
+    def functions(self, source_hash: str | None = None) -> list[Function]:
+        """The functions under test, each with its runs (see functions.py)."""
+        source_hash = source_hash or self.store.source_hash()
+        flows = self.flows(source_hash)
+        with self._lock:
+            if not (self._entries and self._entries[0] == source_hash):
+                static: dict = {}
+                for name, lang in self.languages.items():
+                    static.update(lang.entry_points([f for f in flows if f.language == name]))
+                self._entries = (source_hash, static)
+            static = self._entries[1]
+        index = self.store.index()
+        recorded = {fid: e["functions"] for fid, e in index.items() if e.get("functions")}
+        return catalog(flows, static, recorded)
 
     def flow(self, flow_id: str) -> Flow:
         for f in self.flows():

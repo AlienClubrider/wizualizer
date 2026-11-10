@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .discovery import Flow, java_flows, python_flows
+from .functions import EntryPoint
 from .ports import Recorder, SourceModel
 
 
@@ -26,6 +27,10 @@ class Language(Protocol):
 
     def probe(self, flows: list[Flow], watch: dict[str, list[int]]) -> dict[str, dict]:
         """Run these tests once; test id -> {"lines": {file: [watched lines run]}, "starts": {...}}."""
+        ...
+
+    def entry_points(self, flows: list[Flow]) -> dict[str, EntryPoint | None]:
+        """Flow id -> the production function its test calls, read from the source (no test runs)."""
         ...
 
 
@@ -62,6 +67,11 @@ class PythonLanguage:
         wanted = {f.id for f in flows}
         return {t: h for t, h in probe(self.root, self.python, watch).items() if t in wanted}
 
+    def entry_points(self, flows: list[Flow]) -> dict[str, EntryPoint | None]:
+        from .python.entry import entry_points
+
+        return entry_points(self.root, flows)
+
 
 class JavaLanguage:
     name = "java"
@@ -92,3 +102,8 @@ class JavaLanguage:
         from .java.probe import probe
 
         return probe(self.root, [(f.id, self.root / f.file) for f in flows], watch, self.java_home)
+
+    def entry_points(self, flows: list[Flow]) -> dict[str, EntryPoint | None]:
+        from .java.entry import entry_points
+
+        return entry_points(self.root, flows)

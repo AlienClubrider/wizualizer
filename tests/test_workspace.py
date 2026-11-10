@@ -7,6 +7,7 @@ import textwrap
 import pytest
 
 from wizualizer.discovery import Flow
+from wizualizer.functions import EntryPoint
 from wizualizer.languages import PythonLanguage
 from wizualizer.python.source import PythonSource
 from wizualizer.store import Store
@@ -92,6 +93,10 @@ class FakeLanguage:
 
     def interpreter(self):
         return None
+
+    def entry_points(self, flows):
+        return {f.id: EntryPoint("pricing.py", "shipping", "shipping(subtotal)", 1, (("subtotal", "6000"),))
+                for f in flows}
 
     def probe(self, flows, watch):
         self.probed += 1

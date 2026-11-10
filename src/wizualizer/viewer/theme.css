@@ -1,4 +1,4 @@
-/* Palettes shared by the viewer and the flows page. Light is the default;
+/* Palettes shared by the viewer and the functions page. Light is the default;
    <html data-theme="dark"> switches (see theme.js). */
 :root {
   color-scheme: light;
