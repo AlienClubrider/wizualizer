@@ -8,12 +8,12 @@ from pathlib import Path
 
 from ..ports import RecordingFailed
 from .helper import JdkMissing, find_jdk, helper_command
-from .project import ProjectError, SourceIndex, detect_build
-from .recorder import CONNECT_TIMEOUT_MS, attach_and_build
+from .project import JavaTest, ProjectError, SourceIndex, detect_build
+from .recorder import attach_and_build, failure, test_task
 
 
 def probe(root: Path, tests: list[tuple[str, Path]], watch: dict[str, list[int]],
-          java_home: str | None = None) -> dict[str, dict]:
+          java_home: str | None = None, progress=None) -> dict[str, dict]:
     """tests: (Class#method, test file). Returns test id -> {"lines": {file: [lines]}}."""
     if not watch or not tests:
         return {}
@@ -21,17 +21,18 @@ def probe(root: Path, tests: list[tuple[str, Path]], watch: dict[str, list[int]]
         jdk = find_jdk(java_home)
         helper = helper_command(jdk)
         index = SourceIndex.scan(root)
-        builds: dict[tuple[Path, Path], tuple] = {}
+        builds: dict[tuple[Path, Path, str], tuple] = {}
         for test_id, file in tests:
             build = detect_build(file, root)
-            entry = builds.setdefault((build.root, build.module), (build, set(), set()))
-            entry[1].add(test_id.split("#", 1)[0].split("$", 1)[0])
-            entry[2].add(test_id)
+            task = test_task(JavaTest(test_id.split("#", 1)[0], "", file))
+            entry = builds.setdefault((build.root, build.module, task), (build, task, set(), set()))
+            entry[2].add(test_id.split("#", 1)[0].split("$", 1)[0])
+            entry[3].add(test_id)
     except (ProjectError, JdkMissing) as exc:
         raise RecordingFailed(str(exc)) from exc
 
     hits: dict[str, dict] = {}
-    for build, classes, ids in builds.values():
+    for build, task, classes, ids in builds.values():
         with tempfile.TemporaryDirectory(prefix="wiz-") as tmp:
             tmp = Path(tmp)
             out, watch_file, tests_file = tmp / "hits.json", tmp / "watch.tsv", tmp / "tests.txt"
@@ -39,17 +40,16 @@ def probe(root: Path, tests: list[tuple[str, Path]], watch: dict[str, list[int]]
                                   encoding="utf-8")
             tests_file.write_text("\n".join(sorted(ids)) + "\n", encoding="utf-8")
             args = ["probe", "--root", str(root), "--out", str(out), "--watch", str(watch_file),
-                    "--tests", str(tests_file), "--timeout", str(CONNECT_TIMEOUT_MS)]
+                    "--tests", str(tests_file), "--timeout", "0"]
             for r in index.roots:
                 args += ["--source-root", str(r)]
             for p in index.packages:
                 args += ["--package", p]
-            build_out, helper_err, _ = attach_and_build(
+            run = attach_and_build(
                 helper + args, build,
-                lambda agent, init: build.command_for_classes(sorted(classes), agent, init), jdk, tmp)
+                lambda agent, init: build.command_for_classes(sorted(classes), agent, init, task), jdk, progress)
             if not out.exists():
-                raise RecordingFailed(f"the test JVM never connected for the changed-lines run.\n"
-                                      f"{build.tool} output:\n{build_out[-4000:]}\n{helper_err[-2000:]}")
+                raise failure(build, run, ", ".join(sorted(classes)), task)
             for test, files in json.loads(out.read_text(encoding="utf-8"))["hits"].items():
                 hits[test] = {"lines": files}
     return hits

@@ -100,7 +100,8 @@
       const f = S.flows.find((x) => x.id === wantOpen);
       if (f && busy(f.job)) {
         n.hidden = false;
-        n.replaceChildren(el('span', { class: 'spin' }), `Recording ${f.name} (${secs(f.job)}s). It opens when done.`);
+        n.replaceChildren(el('span', { class: 'spin' }), `Recording ${f.name} (${secs(f.job)}s). It opens when done.`,
+          f.job.progress ? el('small', { class: 'progress' }, f.job.progress) : null);
       }
     }
 
@@ -159,7 +160,7 @@
       chips.push(el('span', { class: `chip ${f.cached.outcome}` }, f.cached.outcome));
     } else if (f.job && f.job.status === 'failed') {
       chips.push(el('span', { class: 'chip failed' }, 'not recorded'));
-      err = el('details', { class: 'err' }, el('summary', {}, 'Recording failed: details'), el('pre', {}, f.job.error));
+      err = failure(f);
     } else {
       chips.push(el('span', { class: 'chip new' }, 'not recorded'));
     }
@@ -171,6 +172,27 @@
       if (!busy(f.job)) record(f.id); else { wantOpen = f.id; render(); }
     });
     return el('div', { class: 'item' }, a, err);
+  }
+
+  // A failed recording: the reason in one line, what to do, and the build's whole output on demand.
+  function failure(f) {
+    const j = f.job;
+    const pre = el('pre', { class: 'log' }, j.has_log ? 'Loading the build output…' : j.error);
+    const box = el('details', { class: 'err' },
+      el('summary', {}, el('b', {}, 'Recording failed: '), j.reason || 'see details'),
+      j.hint ? el('p', { class: 'hint' }, j.hint) : null,
+      j.log_path ? el('p', { class: 'muted' }, `Full build output, also saved in ${j.log_path}:`) : null,
+      pre);
+    box.addEventListener('toggle', async () => {
+      if (!box.open || !j.has_log || pre.dataset.loaded) return;
+      try {
+        const r = await fetch(`/api/log?id=${encodeURIComponent(f.id)}`);
+        pre.textContent = await r.text();
+        pre.dataset.loaded = '1';
+        pre.scrollTop = pre.scrollHeight;
+      } catch (e) { pre.textContent = j.error; }
+    });
+    return box;
   }
 
   $('search').addEventListener('input', () => S && render());

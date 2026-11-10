@@ -604,7 +604,11 @@ final class Recorder {
     Files.writeString(out, Json.write(rec), StandardCharsets.UTF_8);
   }
 
-  /** Listen on a free 127.0.0.1 port, print "LISTENING host:port", accept the test JVM. */
+  /**
+   * Listen on a free 127.0.0.1 port, print "LISTENING host:port", accept the test JVM (timeout 0:
+   * wait for as long as the build takes; wiz stops this process if the build ends first), then
+   * print "CONNECTED".
+   */
   static VirtualMachine accept(int timeoutMs) throws Exception {
     ListeningConnector lc =
         Bootstrap.virtualMachineManager().listeningConnectors().stream()
@@ -619,7 +623,10 @@ final class Recorder {
     System.out.println("LISTENING " + address);
     System.out.flush();
     try {
-      return lc.accept(args);
+      VirtualMachine vm = lc.accept(args);
+      System.out.println("CONNECTED");
+      System.out.flush();
+      return vm;
     } finally {
       lc.stopListening(args);
     }

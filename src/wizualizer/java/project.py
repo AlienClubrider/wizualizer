@@ -7,6 +7,7 @@ only that module's tests.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -112,17 +113,20 @@ class Build:
     def module_path(self) -> str:
         return self.module.relative_to(self.root).as_posix() if self.module != self.root else ""
 
-    def command(self, test: JavaTest, agent: str, init_script: Path | None = None) -> list[str]:
+    def command(self, test: JavaTest, agent: str, init_script: Path | None = None,
+                task: str | None = None) -> list[str]:
         """The build command that runs only `test`, with `agent` added to the test JVM."""
         return self.command_for(
-            [f"{test.cls.replace('$', '*')}#{test.method}"], [f"{test.cls}.{test.method}"], agent, init_script)
+            [f"{test.cls.replace('$', '*')}#{test.method}"], [f"{test.cls}.{test.method}"], agent, init_script,
+            task or gradle_task(test.file))
 
-    def command_for_classes(self, classes: list[str], agent: str, init_script: Path | None = None) -> list[str]:
+    def command_for_classes(self, classes: list[str], agent: str, init_script: Path | None = None,
+                            task: str = "test") -> list[str]:
         """The build command that runs every test in these (top-level) classes, in one test JVM."""
-        return self.command_for([",".join(classes)], classes, agent, init_script)
+        return self.command_for([",".join(classes)], classes, agent, init_script, task)
 
     def command_for(self, maven_filters: list[str], gradle_filters: list[str], agent: str,
-                    init_script: Path | None) -> list[str]:
+                    init_script: Path | None, task: str = "test") -> list[str]:
         if self.tool == "maven":
             cmd = [self.executable, "-B", "--no-transfer-progress", "test",
                    *(f"-Dtest={f}" for f in maven_filters),
@@ -131,34 +135,80 @@ class Build:
             if self.module_path:
                 cmd += ["-pl", self.module_path, "-am"]
             return cmd
-        task = f":{self.module_path.replace('/', ':')}:test" if self.module_path else "test"
+        path = f":{self.module_path.replace('/', ':')}:{task}" if self.module_path else task
         cmd = [self.executable, "--console=plain", "--no-scan"]
         if init_script:
-            cmd += ["--init-script", str(init_script)]
-        cmd.append(task)
+            # The init script reads the agent from this property when the test JVM starts, so the
+            # script never changes and Gradle's configuration cache stays valid between recordings.
+            cmd += ["--init-script", str(init_script), f"-D{AGENT_PROPERTY}={agent}"]
+        cmd.append(path)
         for f in gradle_filters:
             cmd += ["--tests", f]
         return cmd
 
-    def report(self, test: JavaTest) -> Path:
+    def report(self, test: JavaTest, task: str | None = None) -> Path:
         """Where the JUnit XML report for the test class ends up."""
         outer = test.cls.split("$", 1)[0]
         if self.tool == "maven":
             return self.module / "target" / "surefire-reports" / f"TEST-{outer}.xml"
-        return self.module / "build" / "test-results" / "test" / f"TEST-{test.cls}.xml"
+        return self.module / "build" / "test-results" / (task or gradle_task(test.file)) / f"TEST-{test.cls}.xml"
 
 
-def gradle_init_script(agent: str) -> str:
-    """Init script that adds the debug agent to every Test task and forces it to run."""
-    return (
-        "allprojects {\n"
-        "  tasks.withType(Test).configureEach {\n"
-        f"    jvmArgs '{agent}'\n"
-        "    outputs.upToDateWhen { false }\n"
-        "    maxParallelForks = 1\n"
-        "  }\n"
-        "}\n"
-    )
+def gradle_task(test_file: Path) -> str:
+    """The Test task for a test file's source set: src/test/java -> test,
+    src/integrationTest/java -> integrationTest (Gradle's JVM test suite convention)."""
+    parts = test_file.parts
+    for i in range(len(parts) - 2, 0, -1):
+        if parts[i - 1] == "src" and parts[i + 1] in ("java", "kotlin", "groovy"):
+            return "test" if parts[i] == "main" else parts[i]
+    return "test"
+
+
+AGENT_PROPERTY = "wiz.jdwp"
+
+# Adds the debug agent to the test JVM of every Test task in the build wiz runs (not buildSrc or
+# included builds). It is a jvmArgumentProvider, so a build that sets `jvmArgs = [...]` cannot drop
+# it, and it is configured after the build's own scripts, so their maxParallelForks, forkEvery and
+# caching settings cannot undo it. The test task always runs: never up to date, never from the cache.
+GRADLE_INIT_SCRIPT = """\
+// wizualizer: lets wiz record one test. Safe to delete; wiz writes it again when needed.
+class WizJdwpAgent implements CommandLineArgumentProvider {
+  Iterable<String> asArguments() {
+    String agent = System.getProperty('wiz.jdwp')
+    return agent ? [agent] : []
+  }
+}
+
+if (gradle.parent == null) {
+  allprojects {
+    afterEvaluate {
+      tasks.withType(Test).configureEach {
+        jvmArgumentProviders.add(new WizJdwpAgent())
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        maxParallelForks = 1
+        forkEvery = 0
+      }
+    }
+  }
+}
+"""
+
+
+def gradle_init_script() -> Path:
+    """The init script (GRADLE_INIT_SCRIPT), written once to a stable path in the user's cache."""
+    digest = hashlib.sha256(GRADLE_INIT_SCRIPT.encode()).hexdigest()[:12]
+    path = cache_dir() / "gradle" / f"wiz-init-{digest}.gradle"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".tmp{os.getpid()}")
+        tmp.write_text(GRADLE_INIT_SCRIPT, encoding="utf-8")
+        tmp.replace(path)
+    return path
+
+
+def cache_dir() -> Path:
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "wizualizer"
 
 
 def detect_build(test_file: Path, stop: Path) -> Build:
@@ -185,11 +235,8 @@ def detect_build(test_file: Path, stop: Path) -> Build:
             break
         if is_gradle and _has(d, GRADLE_SETTINGS):
             root = d
-        if not is_gradle:
-            if (d / "pom.xml").exists():
-                root = d
-            else:
-                break
+        if not is_gradle and (d / "pom.xml").exists() and module in _maven_modules(d):
+            root = d  # an aggregator that builds the module, even with pom-less folders between
         if d == stop:
             break
     if is_gradle and not _has(root, GRADLE_SETTINGS) and _has(module, GRADLE_SETTINGS):
@@ -204,6 +251,27 @@ def detect_build(test_file: Path, stop: Path) -> Build:
         if not exe:
             raise ProjectError(f"{tool} project without a wrapper, and `{'gradle' if is_gradle else 'mvn'}` is not on PATH")
     return Build(tool, root, module, exe)
+
+
+_MODULE = re.compile(r"<module>\s*([^<]+?)\s*</module>")
+
+
+def _maven_modules(pom_dir: Path, depth: int = 0) -> set[Path]:
+    """Every module directory a pom.xml aggregates, transitively."""
+    try:
+        text = (pom_dir / "pom.xml").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    found: set[Path] = set()
+    for name in _MODULE.findall(text):
+        sub = (pom_dir / name).resolve()
+        if sub.name == "pom.xml" or sub.suffix == ".xml":
+            sub = sub.parent
+        if sub not in found and depth < 8:
+            found.add(sub)
+            found |= _maven_modules(sub, depth + 1)
+    return found
 
 
 def _has(d: Path, names: tuple[str, ...]) -> bool:

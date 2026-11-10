@@ -3,7 +3,8 @@ import os
 import pytest
 
 from wizualizer.cli import guess_language
-from wizualizer.java.project import JavaTest, ProjectError, SourceIndex, detect_build, resolve_test
+from wizualizer.java.project import (JavaTest, ProjectError, SourceIndex, detect_build, gradle_init_script, gradle_task,
+                                     resolve_test)
 from wizualizer.java.recorder import read_report
 
 
@@ -57,11 +58,32 @@ def test_maven_single_module_uses_wrapper(tmp_path):
 
 
 def test_maven_multi_module_builds_only_the_test_module(tmp_path):
-    write(tmp_path, {"pom.xml": "<project/>", "mvnw": "", "core/pom.xml": "<project/>", "core/src/test/java/T.java": ""})
+    write(tmp_path, {"pom.xml": "<project><modules><module>core</module></modules></project>", "mvnw": "",
+                     "core/pom.xml": "<project/>", "core/src/test/java/T.java": ""})
     b = detect_build(tmp_path / "core/src/test/java/T.java", tmp_path)
     assert (b.root, b.module, b.module_path) == (tmp_path, tmp_path / "core", "core")
     cmd = b.command(JavaTest("a.T", "m", tmp_path), "-agentlib:x")
     assert cmd[cmd.index("-pl") + 1] == "core" and "-am" in cmd
+
+
+def test_maven_module_nested_below_a_folder_without_a_pom(tmp_path):
+    # services/ has no pom.xml; the root pom lists services/payments. Building only the module
+    # would miss its sibling dependencies, so the root must be the aggregator.
+    write(tmp_path, {
+        "pom.xml": "<project><modules><module>common/ledger</module>\n<module>services/payments</module>"
+                   "<!-- <module>old</module> --></modules></project>",
+        "common/ledger/pom.xml": "<project/>", "services/payments/pom.xml": "<project/>",
+        "services/payments/src/test/java/T.java": "", "mvnw": "",
+    })
+    b = detect_build(tmp_path / "services/payments/src/test/java/T.java", tmp_path)
+    assert (b.root, b.module_path) == (tmp_path, "services/payments")
+
+
+def test_maven_parent_that_does_not_list_the_module_is_not_the_root(tmp_path):
+    write(tmp_path, {"pom.xml": "<project/>", "mvnw": "", "core/pom.xml": "<project/>", "core/mvnw": "",
+                     "core/src/test/java/T.java": ""})
+    b = detect_build(tmp_path / "core/src/test/java/T.java", tmp_path)
+    assert (b.root, b.module_path) == (tmp_path / "core", "")
 
 
 def test_gradle_multi_project_runs_the_module_test_task(tmp_path):
@@ -73,8 +95,33 @@ def test_gradle_multi_project_runs_the_module_test_task(tmp_path):
     assert (b.tool, b.root, b.executable) == ("gradle", tmp_path, str(tmp_path / "gradlew"))
     init = tmp_path / "init.gradle"
     cmd = b.command(JavaTest("a.T", "m", tmp_path), "-agentlib:x", init)
-    assert cmd[1:] == ["--console=plain", "--no-scan", "--init-script", str(init), ":services:bank:test", "--tests", "a.T.m"]
+    assert cmd[1:] == ["--console=plain", "--no-scan", "--init-script", str(init), "-Dwiz.jdwp=-agentlib:x",
+                       ":services:bank:test", "--tests", "a.T.m"]
     assert b.report(JavaTest("a.T", "m", tmp_path)) == tmp_path / "services/bank/build/test-results/test/TEST-a.T.xml"
+
+
+def test_gradle_test_task_follows_the_source_set(tmp_path):
+    write(tmp_path, {"settings.gradle": "", "gradlew": "", "app/build.gradle": "",
+                     "app/src/integrationTest/java/a/T.java": ""})
+    file = tmp_path / "app/src/integrationTest/java/a/T.java"
+    assert gradle_task(file) == "integrationTest"
+    assert gradle_task(tmp_path / "app/src/test/java/a/T.java") == "test"
+    assert gradle_task(tmp_path / "T.java") == "test"
+    b = detect_build(file, tmp_path)
+    test = JavaTest("a.T", "m", file)
+    assert ":app:integrationTest" in b.command(test, "-agentlib:x")
+    assert b.report(test) == tmp_path / "app/build/test-results/integrationTest/TEST-a.T.xml"
+
+
+def test_gradle_init_script_survives_builds_that_set_jvm_args(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    path = gradle_init_script()
+    assert path == gradle_init_script() and path.is_relative_to(tmp_path)  # stable: configuration cache stays valid
+    text = path.read_text()
+    assert "jvmArgumentProviders.add" in text and "jvmArgs" not in text  # `jvmArgs = [...]` cannot drop it
+    assert "afterEvaluate" in text and "gradle.parent == null" in text  # after the build's config; not buildSrc
+    assert "upToDateWhen { false }" in text and "cacheIf { false }" in text  # never UP-TO-DATE or FROM-CACHE
+    assert "System.getProperty('wiz.jdwp')" in text
 
 
 def test_gradle_project_below_the_git_root(tmp_path):

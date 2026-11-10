@@ -100,8 +100,10 @@ class Workspace:
         entry = self.store.index().get(flow.id)
         return entry if entry and entry["key"] == self.trace_key(flow, source_hash, diff) else None
 
-    def trace(self, flow_id: str, record: bool = True) -> dict | None:
-        """The flow's trace from the cache, else recorded now (None if not cached and record=False)."""
+    def trace(self, flow_id: str, record: bool = True, progress=None) -> dict | None:
+        """The flow's trace from the cache, else recorded now (None if not cached and record=False).
+
+        progress(note) hears how the build is getting on while it records."""
         flow = self.flow(flow_id)
         source_hash, diff = self.store.source_hash(), self.diff()
         key = self.trace_key(flow, source_hash, diff)
@@ -109,9 +111,14 @@ class Workspace:
         if trace is not None or not record:
             return trace
         lang = self.languages[flow.language]
-        request = RecordRequest(flow.id, self.root, self.root, self.max_steps, lang.interpreter())
-        trace = make_trace(lang.recorder(), lang.source(), request,
-                           diff.changes, diff.info if diff.available else None)
+        request = RecordRequest(flow.id, self.root, self.root, self.max_steps, lang.interpreter(), progress)
+        try:
+            trace = make_trace(lang.recorder(), lang.source(), request,
+                               diff.changes, diff.info if diff.available else None)
+        except RecordingFailed as exc:
+            if exc.log:
+                exc.log_path = self.store.save_log(flow.id, exc.log)
+            raise
         self.store.save_trace(flow.id, key, trace)
         return trace
 

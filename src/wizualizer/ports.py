@@ -9,7 +9,8 @@ docs/trace-format.md.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -21,10 +22,18 @@ class RecordRequest:
     cwd: Path  # where the test runner is started
     max_steps: int = 10_000
     interpreter: str | None = None  # language runtime to use, if the recorder needs one
+    progress: Callable[[str], None] | None = field(default=None, compare=False)  # e.g. "> Task :app:test"
 
 
 class RecordingFailed(RuntimeError):
-    pass
+    """str() is the whole story for a terminal. reason (one line), hint and log (the full build
+    output) are there for the web app to show them apart."""
+
+    def __init__(self, message: str, reason: str = "", hint: str = "", log: str = ""):
+        super().__init__(message)
+        self.reason = reason or message.split("\n", 1)[0]
+        self.hint = hint
+        self.log = log
 
 
 class Recorder(Protocol):

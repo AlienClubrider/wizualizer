@@ -110,6 +110,14 @@ class Store:
         """test id -> {key, outcome, steps, truncated, coverage} of its latest recording."""
         return _load(self.dir / "flows" / "index.json") or {}
 
+    # ---- build logs of failed recordings -------------------------------------------------------
+
+    def save_log(self, test_id: str, text: str) -> Path:
+        path = self.dir / "logs" / f"{slug(test_id)}.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
     # ---- change scans -------------------------------------------------------------------------
 
     def load_scan(self, key: str) -> dict | None:

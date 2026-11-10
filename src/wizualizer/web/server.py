@@ -24,6 +24,7 @@ from ..viewer.render import escape, render_html
 from ..workspace import Workspace
 
 PREFERRED_PORT = 7357
+LOG_SHOWN = 400_000  # characters of a failed build's output sent to the page (the whole log is in .wiz/logs/)
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
        "connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'")
 
@@ -49,8 +50,14 @@ class Jobs:
         return job
 
     def snapshot(self) -> dict[str, dict]:
+        """Every job, without its build log (the page fetches that from /api/log when shown)."""
         with self._lock:
-            return {k: dict(v) for k, v in self.state.items()}
+            return {k: {f: x for f, x in v.items() if f != "log"} | {"has_log": bool(v.get("log"))}
+                    for k, v in self.state.items()}
+
+    def log(self, key: str) -> str:
+        with self._lock:
+            return (self.state.get(key) or {}).get("log", "")
 
     def _work(self) -> None:
         while True:
@@ -61,10 +68,15 @@ class Jobs:
                 if key == "scan":
                     self.ws.scan()
                 else:
-                    self.ws.trace(key.split(":", 1)[1])
+                    self.ws.trace(key.split(":", 1)[1], progress=lambda note: job.update(progress=note))
                 job.update(status="done", finished=time.time())
-            except (RecordingFailed, KeyError) as exc:
-                job.update(status="failed", error=str(exc)[-6000:], finished=time.time())
+            except RecordingFailed as exc:
+                log_path = getattr(exc, "log_path", None)
+                job.update(status="failed", error=str(exc)[-12_000:], reason=exc.reason, hint=exc.hint,
+                           log=exc.log[-LOG_SHOWN:], log_path=str(log_path) if log_path else "",
+                           finished=time.time())
+            except KeyError as exc:
+                job.update(status="failed", error=str(exc), reason=str(exc), finished=time.time())
             except Exception:  # keep the worker alive; show what broke
                 job.update(status="failed", error=traceback.format_exc()[-6000:], finished=time.time())
 
@@ -154,6 +166,9 @@ def make_handler(app: App):
                 return self._html(page, 200)
             if url.path == "/api/state":
                 return self._json(app.state())
+            if url.path == "/api/log":
+                flow_id = parse_qs(url.query).get("id", [""])[0]
+                return self._send(200, app.jobs.log(f"record:{flow_id}").encode("utf-8"), "text/plain; charset=utf-8")
             if url.path == "/flow":
                 flow_id = parse_qs(url.query).get("id", [""])[0]
                 try:
