@@ -38,6 +38,8 @@
   const isChangedLine = (file, line) => !!(changed[file] && changed[file].has(line));
 
   const stackAt = new Array(N), snapAt = new Array(N), prevSnapAt = new Array(N), prevInFrame = new Array(N);
+  // callSite[j] for a call step j: the caller's step that made the call (its line), or -1 if the caller is hidden.
+  const callSite = new Array(N).fill(-1);
   {
     let stack = [];
     const lastSnap = {}, lastIdx = {};
@@ -51,12 +53,45 @@
       prevSnapAt[i] = s.kind === 'line' ? prev || null : null;
       lastSnap[s.frame] = snap;
       prevInFrame[i] = lastIdx[s.frame] ?? -1;
+      if (s.kind === 'call' && !s.resume) {
+        const parent = frames[s.frame].parent;
+        if (parent != null && lastIdx[parent] !== undefined) callSite[i] = lastIdx[parent];
+      }
       if (s.kind === 'call' || s.kind === 'line') lastIdx[s.frame] = i;
       if (s.kind === 'return') {
         const k = stack.indexOf(s.frame);
         if (k >= 0) stack = stack.slice(0, k);
       }
     });
+  }
+
+  const fnKey = (fid) => `${fns[fid].file}::${fns[fid].qualname}`;
+  // "pkg.QuoteTest#quotes" or "tests/test_x.py::TestA::test_b" -> "QuoteTest › quotes", "TestA › test_b"
+  const testLabel = (t) => {
+    const java = t.includes('#') && !t.includes('::');
+    const parts = java ? t.split('#') : t.split('::');
+    const name = parts.pop(), owner = parts.pop() || '';
+    const cls = java ? owner.split('.').pop().replace(/\$/g, '.') : owner.split('/').pop();
+    return cls ? `${cls} › ${name}` : name;
+  };
+  const depthAt = (i) => stackAt[i].length;
+  // Calls made from each flowchart node: fnId -> nodeId -> [{callee, steps: [call step indices]}]
+  const callsFrom = {};
+  function callsOf(fnId, flow) {
+    if (callsFrom[fnId]) return callsFrom[fnId];
+    const out = {};
+    for (let j = 0; j < N; j++) {
+      const at = callSite[j];
+      if (at < 0 || fnIdOfStep(steps[at]) !== fnId) continue;
+      const node = steps[at].kind === 'call' ? flow.start : flow.nodeFor(steps[at].line);
+      if (node === null || node === undefined) continue;
+      const callee = fnIdOfStep(steps[j]);
+      const list = (out[node] = out[node] || []);
+      let entry = list.find((c) => c.callee === callee);
+      if (!entry) list.push((entry = { callee, steps: [] }));
+      entry.steps.push(j);
+    }
+    return (callsFrom[fnId] = out);
   }
 
   // Actors: drop "#1" when a class only ever had one instance.
@@ -154,6 +189,13 @@
       }
       return out;
     };
+    const nodeFor = nodeLookup(fc);
+    const start = fc.nodes.find((n) => n.kind === 'start').id;
+    const end = fc.nodes.find((n) => n.kind === 'end').id;
+    const calls = callsOf(fnId, { nodeFor, start });
+    const CALL_CH = 6.6, MAX_CHIPS = 3;
+    const chipText = (c) => `↘ ${fns[c.callee].name}${c.steps.length > 1 ? ` ×${c.steps.length}` : ''}`;
+    const chipW = (c) => Math.min(20 + chipText(c).length * CALL_CH, 220);
     const edgesAll = fc.edges.map((e) => ({ ...e, r1: e.from, r2: e.to }));
     const back = edgesAll.filter((e) => e.to <= e.from);
     const fwd = edgesAll.filter((e) => e.to > e.from + 1);
@@ -164,9 +206,11 @@
       const hex = n.kind === 'decision' || n.kind === 'loop';
       const w = Math.min(Math.max(n.label.length * CH + (hex ? 40 : 26), 64), 440);
       const st = status(n);
-      return { x: leftPad + n.depth * INDENT, y: 12 + i * ROW, w, hex, st, badge: st === 'miss' ? 70 : st ? 18 : 0 };
+      const chips = (calls[n.id] || []).slice(0, MAX_CHIPS);
+      const callW = chips.reduce((a, c) => a + chipW(c) + 6, 0);
+      return { x: leftPad + n.depth * INDENT, y: 12 + i * ROW, w, hex, st, badge: st === 'miss' ? 70 : st ? 18 : 0, chips, callW };
     });
-    const maxRight = Math.max(...pos.map((p) => p.x + p.w + p.badge));
+    const maxRight = Math.max(...pos.map((p) => p.x + p.w + p.badge + (p.callW ? p.callW + 6 : 0)));
     const laneBase = maxRight + 18;
     const W = laneBase + nFwd * 10 + 24, H = 12 + fc.nodes.length * ROW;
     const svg = h('svg', { class: 'fc', viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img', 'aria-label': `Flowchart of ${fn.qualname}` }, wrap);
@@ -218,10 +262,21 @@
       g.addEventListener('click', () => jumpToNode(fnId, n.id));
       g.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') jumpToNode(fnId, n.id); });
       nodeEls.push(g);
+      // A chip per function this node calls: tap it to step into that call.
+      let cx = p.x + p.w + p.badge + 8;
+      for (const c of p.chips) {
+        const w = chipW(c), callee = fns[c.callee];
+        const cg = h('g', { class: 'callchip', tabindex: 0, role: 'button', 'aria-label': `Step into ${callee.qualname}` }, svg);
+        h('title', {}, cg, `Step into ${callee.qualname} (${c.steps.length} call${c.steps.length === 1 ? '' : 's'} from here)`);
+        h('rect', { class: 'hit', x: cx - 3, y: p.y - 7, width: w + 6, height: NH + 14 }, cg); // a bigger tap target
+        h('rect', { class: 'pill', x: cx, y: p.y + 3, width: w, height: NH - 6, rx: (NH - 6) / 2 }, cg);
+        h('text', { x: cx + 10, y: p.y + NH / 2 + 4 }, cg, clip(chipText(c), Math.floor((w - 16) / CALL_CH)));
+        const follow = (ev) => { ev.stopPropagation(); followCall(c); };
+        cg.addEventListener('click', follow);
+        cg.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); follow(ev); } });
+        cx += w + 6;
+      }
     });
-    const nodeFor = nodeLookup(fc);
-    const start = fc.nodes.find((n) => n.kind === 'start').id;
-    const end = fc.nodes.find((n) => n.kind === 'end').id;
     return (flowCache[fnId] = { wrap, svg, W, H, fc, pos, nodes: nodeEls, edges: edgeEls, edgeMarker: mk, nodeFor, start, end, scale: null });
   }
 
@@ -343,7 +398,7 @@
         h('line', { class: 'hit', x1, y1: y, x2, y2: y }, g);
       }
       h('title', {}, g, m.label);
-      g.addEventListener('click', () => go(m.step));
+      g.addEventListener('click', () => follow(m.step));
       return { g, shape, marker, y };
     });
     seqView = { svg, head, W, H, HH, els, rowY };
@@ -397,8 +452,11 @@
       const fid = st[k], f = frames[fid], ffn = fns[f.fn];
       let line = ffn.line;
       for (let j = cur; j >= 0; j--) if (steps[j].frame === fid) { line = steps[j].line; break; }
-      const li = h('li', { class: k === st.length - 1 ? 'top' : '' }, ol, ffn.qualname);
-      h('small', {}, li, `${ffn.file}:${line}`);
+      const li = h('li', { class: k === st.length - 1 ? 'top' : '' }, ol);
+      const b = h('button', { type: 'button', class: 'frame', title: k === st.length - 1 ? 'Where it is now' : `Back to ${ffn.qualname}, at its call` }, li);
+      h('span', {}, b, ffn.qualname);
+      h('small', {}, b, `${ffn.file}:${line}`);
+      b.addEventListener('click', () => goToFrame(fid));
     }
   }
 
@@ -529,8 +587,26 @@
     $('scrub').value = cur;
   }
 
+  // The call path to the current step: tap a caller to go back to the line that made the call.
+  function renderCrumbs() {
+    const nav = $('crumbs');
+    nav.replaceChildren();
+    const st = stackAt[cur];
+    st.forEach((fid, k) => {
+      const fn = fns[frames[fid].fn], last = k === st.length - 1;
+      if (k) h('span', { class: 'sep', 'aria-hidden': 'true' }, nav, '›');
+      const b = h('button', { type: 'button', class: last ? 'here' : '', 'aria-current': last ? 'step' : null,
+        title: last ? `${fn.qualname} (now)` : `Back to ${fn.qualname}, at its call` }, nav, fn.qualname);
+      if (!last) b.addEventListener('click', () => goToFrame(fid));
+    });
+    nav.hidden = !st.length;
+    const here = nav.querySelector('.here');
+    if (here) nav.scrollLeft = nav.scrollWidth;
+  }
+
   function render() {
     renderCaption();
+    renderCrumbs();
     renderFlow();
     renderVars();
     renderSeq();
@@ -559,6 +635,42 @@
       go(cur + 1);
       tick();
     }, 650 / speed);
+  }
+  // Follow a call: show the called function from its first step, flowchart unpinned.
+  function follow(j) {
+    setPlaying(false);
+    if (pinnedFn) { pinnedFn = ''; $('fn-select').value = ''; }
+    go(j);
+  }
+  // A call chip: the call at this node from the frame on screen, after the current step if there is one.
+  function followCall(c) {
+    const here = steps[cur].frame;
+    const mine = c.steps.filter((j) => steps[callSite[j]].frame === here);
+    const pick = mine.find((j) => j > cur) ?? mine[0] ?? c.steps.find((j) => j > cur) ?? c.steps[0];
+    follow(pick);
+  }
+  // Back to a frame on the stack: its last step so far (the line that made the call).
+  function goToFrame(fid) {
+    for (let j = cur; j >= 0; j--) if (steps[j].frame === fid) return follow(j);
+  }
+  function stepInto() { setPlaying(false); go(cur + 1); }
+  function stepOver() {
+    setPlaying(false);
+    const d = depthAt(cur);
+    for (let j = cur + 1; j < N; j++) if (depthAt(j) <= d) return go(j);
+    nothingMore('b-over');
+  }
+  function stepOut() {
+    setPlaying(false);
+    const d = depthAt(cur), fid = steps[cur].frame;
+    for (let j = cur + 1; j < N; j++) if (depthAt(j) < d) return follow(j);
+    for (let j = N - 1; j > cur; j--) if (steps[j].frame === fid) return go(j); // caller hidden: its return
+    nothingMore('b-out');
+  }
+  function nothingMore(id) {
+    const b = $(id), text = b.textContent;
+    b.textContent = 'end';
+    setTimeout(() => (b.textContent = text), 900);
   }
   function jumpToNode(fnId, nodeId) {
     const flow = buildFlow(fnId);
@@ -595,8 +707,14 @@
   // ---- wire up ------------------------------------------------------------------------------
   function init() {
     const m = T.meta;
-    $('test-id').textContent = m.test;
-    $('test-id').title = m.test;
+    // Open on the function asked for (#fn=<file>::<qualname>, from the functions page), else the one under test.
+    const wantKey = hashArgs.get('fn');
+    const wantFn = wantKey ? Object.keys(fns).find((id) => fnKey(id) === wantKey) : null;
+    const titleFn = wantFn || (hideTest && m.focus && fns[m.focus] ? m.focus : null);
+    $('test-id').textContent = titleFn ? fns[titleFn].qualname : m.test;
+    $('test-id').title = titleFn ? `${fns[titleFn].qualname} · ${fns[titleFn].file}` : m.test;
+    $('source').textContent = titleFn ? `from ${testLabel(m.test)}` : '';
+    $('source').title = m.test;
     const oc = $('outcome');
     oc.textContent = m.outcome + (m.truncated ? ' · truncated' : '');
     oc.className = `chip ${m.outcome}`;
@@ -618,6 +736,9 @@
     $('b-fwd').addEventListener('click', () => { setPlaying(false); go(cur + 1); });
     $('b-play').addEventListener('click', () => setPlaying(!playing));
     $('b-next-change').addEventListener('click', () => { setPlaying(false); nextChange(); });
+    $('b-into').addEventListener('click', stepInto);
+    $('b-over').addEventListener('click', stepOver);
+    $('b-out').addEventListener('click', stepOut);
     $('speed').addEventListener('change', () => { if (playing) { clearTimeout(timer); tick(); } });
     $('cov-meter').addEventListener('click', () => (narrow() ? setView('cov') : setSide('cov')));
     document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -632,6 +753,9 @@
       else if (k === 'Home') go(0);
       else if (k === 'End') go(N - 1);
       else if (k === 'n') nextChange();
+      else if (k === 'i' || (k === 'F11' && !e.shiftKey)) { e.preventDefault(); stepInto(); }
+      else if (k === 'o' || k === 'F10') { e.preventDefault(); stepOver(); }
+      else if (k === 'u' || (k === 'F11' && e.shiftKey)) { e.preventDefault(); stepOut(); }
     });
     const tt = $('b-test');
     if (prodSteps.length && prodSteps.length < T.steps.length) {
@@ -641,10 +765,12 @@
 
     // Open on the function under test: its first call, so the flowchart and variables start there.
     const startAt = hashArgs.get('step');
-    const focusAt = hideTest && T.meta.focus ? steps.findIndex((s) => fnIdOfStep(s) === T.meta.focus) : -1;
+    const target = wantFn || (hideTest ? T.meta.focus : null);
+    const focusAt = target ? steps.findIndex((s) => fnIdOfStep(s) === target) : -1;
     setSide('code');
     go(startAt ? +startAt : Math.max(0, focusAt));
   }
   init();
-  window.wiz = { go, setView, setSide, setPlaying, get step() { return cur; }, steps: N };
+  window.wiz = { go, setView, setSide, setPlaying, stepInto, stepOver, stepOut, get step() { return cur; }, steps: N,
+    get fn() { return fnIdOfStep(steps[cur]); }, get depth() { return depthAt(cur); } };
 })();

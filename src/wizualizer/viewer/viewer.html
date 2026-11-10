@@ -14,7 +14,7 @@
 <header class="top">
   <div class="title">
     <!--__BACK__--><span class="brand">wiz</span>
-    <span id="test-id" class="test-id"></span>
+    <span class="heading"><span id="test-id" class="test-id"></span><small id="source" class="source"></small></span>
     <span id="outcome" class="chip"></span>
     <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch theme"></button>
   </div>
@@ -36,8 +36,9 @@
       <select id="fn-select" aria-label="Function shown in the flowchart"></select>
       <span class="zoom"><button data-zoom="flow" data-dir="-1" aria-label="Zoom out">−</button><button data-zoom="flow" data-dir="1" aria-label="Zoom in">+</button></span>
     </div>
+    <nav class="crumbs" id="crumbs" aria-label="Call path: tap a caller to go back to its call"></nav>
     <div class="scroll" id="flow"></div>
-    <div class="legend"><span class="lg cur"></span>now <span class="lg vis"></span>ran <span class="lg chg"></span>PR changed <span class="lg miss"></span>PR, never ran <button id="b-test" class="linkish" type="button"></button></div>
+    <div class="legend"><span class="lg cur"></span>now <span class="lg vis"></span>ran <span class="lg chg"></span>PR changed <span class="lg miss"></span>PR, never ran <span class="lg call"></span>tap to step into <button id="b-test" class="linkish" type="button"></button></div>
   </section>
 
   <section class="panel p-vars" data-view="vars">
@@ -75,6 +76,11 @@
     <button id="b-back" aria-label="Step back">◀</button>
     <button id="b-play" class="play" aria-label="Play">▶</button>
     <button id="b-fwd" aria-label="Step forward">▶︎|</button>
+    <span class="stepping" role="group" aria-label="Follow calls">
+      <button id="b-into" class="text step" aria-label="Step into the call" title="Step into the next call (i)">↘ into</button>
+      <button id="b-over" class="text step" aria-label="Step over the call" title="Next line of this function (o)">↷ over</button>
+      <button id="b-out" class="text step" aria-label="Step out to the caller" title="Back to the caller (u)">↗ out</button>
+    </span>
     <button id="b-next-change" class="text" aria-label="Next changed line">next Δ</button>
     <select id="speed" aria-label="Speed">
       <option value="0.5">0.5×</option><option value="1" selected>1×</option>

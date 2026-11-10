@@ -180,3 +180,32 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .back { flex: none; color: var(--muted); text-decoration: none; font-size: 13px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
 .back:hover { color: var(--text); }
 .title .theme-toggle { margin-left: auto; }
+
+/* the function on screen, the test it came from, the call path ------------ */
+.heading { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.heading .test-id { font-weight: 700; font-size: 14px; }
+.heading .source { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumbs { display: flex; align-items: center; gap: 2px; padding: 4px 8px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; white-space: nowrap; min-height: 34px; }
+.crumbs::-webkit-scrollbar { display: none; }
+.crumbs button { flex: none; background: none; border: 0; padding: 4px 6px; min-height: 28px; font: 12px var(--mono); color: var(--cur); text-decoration: underline; text-underline-offset: 2px; }
+.crumbs button.here { color: var(--text); font-weight: 700; text-decoration: none; cursor: default; }
+.crumbs .sep { color: var(--faint); flex: none; }
+.fc .callchip { cursor: pointer; }
+.fc .callchip rect.pill { fill: var(--panel); stroke: var(--cur); stroke-width: 1.2; }
+.fc .callchip rect.hit { fill: transparent; stroke: none; }
+.fc .callchip text { font-size: 11.5px; fill: var(--cur); font-weight: 600; }
+.fc .callchip:hover rect.pill, .fc .callchip:focus-visible rect.pill { fill: var(--cur-bg); stroke-width: 2; }
+.fc .callchip:focus { outline: none; }
+.lg.call { border: 1.5px solid var(--cur); border-radius: 6px; }
+.stack li { padding: 0; }
+.stack button.frame { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 0 6px 6px 0; padding: 8px 8px; min-height: 40px; font: inherit; overflow-wrap: anywhere; }
+.stack button.frame:hover { background: var(--cur-bg); }
+.stepping { display: contents; }
+.buttons button.step { color: var(--cur); }
+
+@media (max-width: 860px) {
+  .stepping { display: flex; order: 10; flex: 1 1 100%; gap: 6px; }
+  .buttons { flex-wrap: wrap; }
+  .buttons button.step { height: 44px; font-size: 14px; }
+  .heading .test-id { font-size: 13px; }
+}

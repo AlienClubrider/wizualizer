@@ -10,10 +10,26 @@ Starts the web app on `127.0.0.1` and prints its URL. Port 7357 if free, else
 any free port. It opens a browser only on a desktop (macOS, Windows, or Linux
 with `$DISPLAY`/`$WAYLAND_DISPLAY`); on a server, open the printed URL.
 
-The page lists every test as a flow, grouped by file and class, with search
-(press `/`). Open a flow: it is recorded (progress shows on the row) and the
-viewer opens. Recordings are cached in `.wiz/`, so reopening is instant until a
-source file or the diff base changes. "← flows" in the viewer goes back.
+The page lists the **functions under test** (`Class.method` or
+`module.function`, with a short signature and, for a web request, the route),
+20 to a page, with search (press `/`) over names, inputs and files. Each
+function shows its **runs**: one per test that calls it, labelled by the inputs
+that differ between them (`amount=20.00, to="USD"`); the test's name is the
+small "from" line. A recording tells runs with the same inputs apart by what
+they returned.
+
+Which function a test is about is read from the test's source before anything
+runs: the first project function it calls (on an object it built, a field, a
+fixture, `@InjectMocks`/`@Autowired`, a static call), and for MockMvc or
+WebTestClient the controller method whose `@*Mapping` matches the request.
+After a recording, what actually ran confirms it or corrects it. Tests where
+nothing is found sit under "Not placed yet" until opened.
+
+Open a run: its test is recorded (the build's progress shows while it runs)
+and the viewer opens on that function. Recordings are cached in `.wiz/`, so
+reopening is instant until a source file or the diff base changes. If a
+recording fails, the row says why in one line, with a fix and the whole build
+output (also in `.wiz/logs/`). "← functions" in the viewer goes back.
 
 | Option | |
 |---|---|
@@ -27,7 +43,7 @@ source file or the diff base changes. "← flows" in the viewer goes back.
 ## `wiz record`
 
 ```sh
-wiz record --all                     # every flow that is not cached yet
+wiz record --all                     # every test that is not recorded yet
 wiz record 'tests/test_x.py::test_y' # or name them (ids as `wiz list` prints them)
 ```
 
@@ -36,7 +52,7 @@ be recorded (a failing test still records fine).
 
 ## `wiz list`
 
-Prints every flow id. `wiz list --changed` prints only the flows that run
+Prints every test id. `wiz list --changed` prints only the tests that run
 changed lines, with the count (see [only-changes.md](only-changes.md)).
 
 ## `wiz run <test>`
@@ -55,14 +71,25 @@ you can open anywhere or attach to a CI run. No server.
 
 ## The viewer
 
-Opens on the **function under test**: the first function the change touches
-that the test reaches, else the first one the test calls. The test's own
+Opens on the **function under test**: the one picked on the functions page,
+else the first function the change touches that the test reaches, else the
+first one the test calls. The test's own
 steps are recorded but hidden; "show test steps" under the flowchart brings
 them back. Test code is `test_*.py`, `*_test.py`, `conftest.py`,
 `*Test.java`, `*Tests.java`, `*IT.java`, and anything under `tests/` or
 `test/`. Changed lines in test files are listed as "test changes", outside the
 coverage number.
 
-Keys: space play/pause, ← → step, Home/End, `n` next changed line. The ☾/☀
+**Follow calls.** A flowchart node that calls project code has a chip per
+function it calls (`↘ quote`, `×3` if it called it several times): tap it to
+jump into that call, the one made from the frame on screen. Tapping a call
+arrow in the sequence diagram or a frame in the call stack does the same. The
+bar above the flowchart is the call path: tap a caller to go back to the line
+that made the call. **↘ into** steps to the next step (into a call if the line
+makes one), **↷ over** to the next line of the same function, **↗ out** back
+to the caller.
+
+Keys: space play/pause, ← → step, `i`/`o`/`u` (or F11, F10, Shift+F11) into,
+over and out, Home/End, `n` next changed line. The ☾/☀
 button switches dark and light (remembered; follows the system until you pick).
 On a phone the views become tabs and the controls stick to the bottom.
