@@ -25,5 +25,10 @@ node scripts/screenshots.js java <viewer.html>    # java-*.png
 node scripts/screenshots.js functions http://127.0.0.1:7357/   # functions page of a running wiz
 ```
 
+Recorder internals (Java): `WIZ_RECORDER_STATS=<file>` appends one line per
+recording with where the time went (events before and during the test,
+breakpoints, unwatched framework calls); `WIZ_RECORDER_DEBUG=<file>` logs
+every JDI event.
+
 Keep it local: no network calls, no telemetry, no runtime dependencies. Pure
 rules get unit tests; adapters get thin integration tests.

@@ -118,6 +118,7 @@ def build_trace(
         "frames": frames,
         "steps": steps,
         "calls": calls,
+        "framework": recording.get("framework", []),
         "coverage": {
             "files": {rel: {str(k): v for k, v in st.items()} for rel, st in sorted(per_file.items())},
             "summary": change_coverage.summarize(per_file),

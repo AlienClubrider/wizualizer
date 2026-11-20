@@ -58,6 +58,59 @@ def test_gradle_spring_mockmvc_test_records_through_controller_and_service(gradl
     assert any(n.startswith("Gradle: :services:payments:") for n in notes)
 
 
+TRANSFERS = "com.harbor.payments.TransferControllerTest#"
+
+
+def hops(rec: dict) -> list[str]:
+    return [n["label"] for n in rec["framework"]]
+
+
+def test_spring_slice_shows_the_framework_hops_and_draws_the_mocked_client_as_a_mock(gradle_root, monkeypatch, tmp_path):
+    stats = tmp_path / "stats.tsv"
+    monkeypatch.setenv("WIZ_RECORDER_STATS", str(stats))
+    rec = record(gradle_root, TRANSFERS + "movesMoney")
+    assert rec["test"]["outcome"] == "passed"
+    called = functions_called(rec)
+    assert called[1:4] == ["TransferController.create", "TransferService.transfer", "TransferStore.save"]
+    assert "TransferAudit.audited" in called
+    assert "FraudCheckClient.score" not in called  # @MockitoBean of a class: a mock, not its real code
+    by_fn = {rec["functions"][rec["frames"][str(c["frame"])]["fn"]]["qualname"]: c for c in rec["calls"] if c["name"] == "score"}
+    score = by_fn["TransferService.transfer"]
+    assert score["mock"] and score["value"] == "10" and score["args"] == {"account": '"ACC-1"', "amount": "25.00"}
+    assert hops(rec) == [
+        "Spring MVC dispatched POST /transfers",
+        "@Transactional TransferService.transfer: began a transaction",
+        "@AfterReturning advice TransferAudit.audited",
+        "@Transactional TransferService.transfer: committed",
+        "Spring MVC answered POST /transfers: 200",
+    ]
+    # Nothing is watched while the Spring context starts: only the test class loading, before the test runs.
+    fields = dict(f.split("=", 1) for f in stats.read_text().split("\t")[1:])
+    assert int(fields["before_window"]) <= 5
+
+
+def test_spring_slice_validation_rejecting_the_request_is_one_step(gradle_root):
+    rec = record(gradle_root, TRANSFERS + "rejectsABlankAccount")
+    assert rec["test"]["outcome"] == "passed"
+    assert "TransferController.create" not in functions_called(rec)
+    assert hops(rec) == [
+        "Spring MVC dispatched POST /transfers",
+        "@Valid rejected the request: account: must not be blank",
+        "Spring MVC answered POST /transfers: 400",
+    ]
+
+
+def test_spring_slice_a_thrown_exception_rolls_the_transaction_back(gradle_root):
+    rec = record(gradle_root, TRANSFERS + "blocksARiskyTransfer")
+    assert rec["test"]["outcome"] == "passed"
+    assert "TransferController.blocked" in functions_called(rec)
+    assert "@Transactional TransferService.transfer: rolled back" in hops(rec)
+    assert hops(rec)[-1] == "Spring MVC answered POST /transfers: 409"
+    raised = [s for s in rec["steps"] if s["kind"] == "return" and s.get("raised")]
+    assert raised and all(s["type"] == "IllegalStateException" for s in raised)
+    assert len(rec["calls"]) < 60  # no library internals recorded while the exception unwinds
+
+
 def test_gradle_records_again_with_the_configuration_cache_reused(gradle_root):
     record(gradle_root, "com.harbor.ledger.FeeScheduleTest#largeTransfersPayThePercentage")
     rec = record(gradle_root, "com.harbor.ledger.FeeScheduleTest#largeTransfersPayThePercentage")

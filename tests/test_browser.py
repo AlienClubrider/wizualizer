@@ -161,6 +161,34 @@ def test_viewer_opens_the_real_code_of_a_mocked_call(mocked_trace, tmp_path):
         assert r["after"]["stand"] is None and r["after"]["step"] == r["into"]["step"] + 1
 
 
+def test_viewer_shows_a_framework_hop_as_one_step(shop_trace, tmp_path):
+    trace = json.loads(json.dumps(shop_trace))
+    steps, frames, fns = trace["steps"], trace["frames"], trace["functions"]
+    fn_of = lambda s: fns[frames[str(s["frame"])]["fn"]]["qualname"]  # noqa: E731
+    at = next(i for i, s in enumerate(steps) if s["kind"] == "line" and fn_of(s) == "OrderService.place_order")
+    label = "@Transactional OrderService.place_order: began a transaction"
+    trace["framework"] = [{"frame": steps[at]["frame"], "line": steps[at]["line"], "after": at,
+                           "kind": "transaction", "label": label}]
+    page = tmp_path / "v.html"
+    page.write_text(render_html(trace))
+    got = browse(tmp_path, page.as_uri(), """
+      const r = {};
+      r.seq = await page.$$eval('#seq .msg.hop text', (els) => els.map((e) => e.textContent));
+      if (phone) await page.click('#tabs button[data-view="flow"]');
+      const chip = page.locator('#flow .callchip.hop').first();
+      r.chip = await chip.locator('title').textContent();
+      await chip.click();
+      if (phone) await page.click('#tabs button[data-view="vars"]');
+      r.vars = await page.evaluate(() => document.getElementById('vars').textContent);
+      return r;
+    """)
+    for vp in ("desk", "phone"):
+        r = got[vp]
+        assert r["errors"] == []
+        assert r["seq"] == [label] and r["chip"] == label
+        assert "then the framework" + label in r["vars"]
+
+
 def test_viewer_opens_on_the_function_asked_for(shop_trace, tmp_path):
     page = tmp_path / "v.html"
     page.write_text(render_html(shop_trace))

@@ -63,13 +63,46 @@ when no Docker is reachable, instead of hanging.
 Methods whose source is in the project. JDK, libraries, JUnit, Mockito mocks
 and generated code (Lombok, record accessors, default constructors) get no
 frame; the calls project code makes into them are listed with their arguments
-and results, and a mocked call points at the project code it stood for
-([mocked-calls.md](mocked-calls.md)). Lambdas are folded into the method that contains
+and results (no result for framework calls, see [Limits](#limits)), and a
+mocked call points at the project code it stood for
+([mocked-calls.md](mocked-calls.md)). Spring's own hops are one step each:
+[Spring service slices](#spring-service-slices). Lambdas are folded into the method that contains
 them. Variables are the locals plus `this.<field>` for every field of `this`.
 Objects from the project show their fields; JDK collections and maps their
 items; `BigDecimal`, `java.time` and `UUID` their value; other library objects
 their class name. The recorder only invokes JDK methods (`toArray`,
 `toString` of those value types), never project code.
+
+## Spring service slices
+
+The test wiz is built for runs the real Spring context (annotations,
+proxies, `@Transactional`, validation, aspects, MVC) with external systems
+mocked: `@MockitoBean` for HTTP clients, queues and other services, an
+in-memory database (H2) instead of a real one. The recording shows your code
+through that framework:
+
+- **Speed.** Nothing is watched while the context starts: before the test
+  method runs, the only breakpoints are on the test method. While it runs,
+  only the project's own classes (those whose source is in the project) have
+  breakpoints, on the test's thread. Method entry/exit events, which slow a
+  whole thread down, are on only while project code itself runs, not while
+  Spring or a library works. A `@WebMvcTest` or `@SpringBootTest` slice
+  records in seconds once the context is up.
+- **Framework hops as one step each**, in the sequence, as a chip on the
+  flowchart node that made the call, and under the variables:
+  `Spring MVC dispatched POST /transfers`,
+  `@Transactional TransferService.transfer: began a transaction` (then
+  `committed` or `rolled back`; `joined the open transaction` for the
+  project's own methods), `@Valid rejected the request: account: must
+  not be blank` (or `@Valid found errors in the form: …` when the controller
+  takes a `BindingResult`), `Spring MVC answered POST /transfers: 400`,
+  `@AfterReturning advice TransferAudit.audited`, `@Async: … handed to another
+  thread (not recorded)`, `@PreAuthorize: checked access to …`, Spring
+  Security denying access. They are read from Spring's own objects; no code is
+  run in the test JVM to find them.
+- **Mocks are mocks.** A `@MockitoBean` or `@Mock` of a class (Mockito 5
+  mocks classes inline, so the class's own method is entered) is drawn as a
+  call to a mock with its stubbed result, not as its real code.
 
 ## The helper
 
@@ -99,5 +132,9 @@ record; 1 of the 3 changed lines ran) and `#testCreditAccount_Success` (2 of 3).
 - Code the test hands to another thread (a real HTTP server with
   `webEnvironment = RANDOM_PORT`, `@Async`, reactive schedulers) is not
   recorded; MockMvc and direct calls run on the test's thread.
-- Recording puts breakpoints on every project line plus method entry/exit, so
-  a test runs several times slower than normal.
+- The value a framework call returned (MockMvc, a Spring proxy, a
+  repository, `JdbcTemplate`) is not recorded: following it to its return
+  would watch every call inside it. Calls into the JDK, mocks and the
+  project's generated code (records, Lombok) show their values.
+- Only the framework hops listed under [Spring service slices](#spring-service-slices)
+  are told. `@Cacheable`, events and other Spring features run unseen.
