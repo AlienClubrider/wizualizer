@@ -188,6 +188,9 @@ final class Recorder {
         unwatch(); // no entry/exit events while this event set is handled
       } catch (com.sun.jdi.VMDisconnectedException gone) {
         break;
+      } catch (RuntimeException err) {
+        // never let the helper die on this: its exit would end the test JVM mid-run
+        System.err.println("wiz: could not pause watching: " + err);
       }
       for (Event e : events) {
         if (DEBUG != null) debug(e);
@@ -211,6 +214,12 @@ final class Recorder {
       if (dead) break;
       try {
         watch();
+      } catch (com.sun.jdi.VMDisconnectedException gone) {
+        break;
+      } catch (RuntimeException err) {
+        System.err.println("wiz: could not resume watching: " + err);
+      }
+      try {
         set.resume();
       } catch (com.sun.jdi.VMDisconnectedException gone) {
         break;
@@ -456,6 +465,8 @@ final class Recorder {
       for (Outside o : outsides) forget(o);
       outsides.clear();
       erm.deleteEventRequests(windowRequests);
+      anyEntry = null; // deleted with windowRequests: watch() must not touch it again
+      frameExits.clear();
       erm.deleteAllBreakpoints();
       erm.deleteEventRequests(erm.classPrepareRequests());
     } catch (RuntimeException ignored) {
