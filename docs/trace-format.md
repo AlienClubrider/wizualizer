@@ -111,7 +111,9 @@ changes meaning. What the values look like:
   statements (they run in the constructor). Declarations without an
   initializer, `else`, `try`, `finally`, `case` labels and closing braces are
   `neutral`: javac emits no code for them. Test files also include
-  `*Test.java`, `*Tests.java`, `*IT.java` and anything under `test/`.
+  `*Test.java`, `*Tests.java`, `*IT.java` and anything in a test source set
+  (`src/test/`, `src/testFixtures/`, `src/integrationTest/`, `src/it/`…). A
+  `test` package under `src/main/java` is production code.
 
 ## Calls that ran no project code
 
@@ -129,8 +131,17 @@ frames stay in `steps`; the viewer hides them unless asked, and draws the
 test as one `test` actor making the top-level calls.
 
 `meta.focus` is the first function, in call order, that is not test code and
-whose lines (from its flowchart) include a PR-changed line; without one, the
-first non-test function called. Older traces without these fields play back
+whose lines (from its flowchart) include a PR-changed line. Without one, it is
+the function the test names: `OwnerControllerTests#processFindFormSuccess`
+opens `OwnerController.processFindForm`. Then, in order: a function whose
+method the test names (in full, or half its words: `create_article_with_tags`
+names `postArticle`), one the test calls itself (the controller rather than
+the service behind it; a servlet filter in between doesn't count), one in the
+class the test names, any other production code. Constructors, one-line
+getters and setters, framework hooks (`@Bean`, `@InitBinder`,
+`@ModelAttribute`, `doFilterInternal`, `preHandle`…) and calls that ran no
+line (an inline Mockito mock) are picked only when nothing else ran; then a
+hook that threw comes first. Older traces without these fields play back
 with every step shown.
 
 ## Step semantics

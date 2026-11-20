@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from . import call_targets, change_coverage
-from .focus import function_under_test, is_test_file, in_test_code
+from .focus import function_under_test, in_test_code, is_test_file, leading_annotations
 from .diff import FileChange
 from .ports import Recorder, RecordRequest, SourceModel
 
@@ -77,6 +77,9 @@ def build_trace(
         steps, frames, test_fns,
         {fid: _span(fn) for fid, fn in functions.items()},
         {rel: c.added for rel, c in changes.items()},
+        functions,
+        {fid: leading_annotations(files[fn["file"]]["source"], fn["line"])
+         for fid, fn in functions.items() if fn["file"] in files and not fn.get("test")},
     )
 
     per_file: dict[str, dict[int, str]] = {}
