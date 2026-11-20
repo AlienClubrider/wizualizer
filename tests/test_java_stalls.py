@@ -118,3 +118,16 @@ def test_stopping_wiz_mid_recording_stops_the_test_jvm_and_the_build(stalls, sig
     if sig == signal.SIGTERM:
         assert wiz.returncode == 130 and "wiz: stopped" in out
     assert wait_until_gone(stalls, 45) == []
+
+
+def test_a_library_call_inside_an_outer_library_call_is_not_watched_by_the_outer_one(stalls, tmp_path, monkeypatch):
+    """Optional.orElseGet(() -> scan()): while scan's stream runs, the open orElseGet call's exit
+    watch (on java.util.Optional) must be off, or every Optional method returning inside the
+    stream stops the thread (a Spring Data lookup in a lambda took 50 s instead of 1)."""
+    stats = tmp_path / "stats.tsv"
+    monkeypatch.setenv("WIZ_RECORDER_STATS", str(stats))
+    rec = record(stalls, "fallsBackToAScan")
+    assert rec["test"]["outcome"] == "passed"
+    assert any(s["kind"] == "return" and s.get("value") == "2000" for s in rec["steps"])
+    events = int(dict(f.split("=", 1) for f in stats.read_text().split("\t")[1:])["events"])
+    assert events < 1000, events  # over 8,000 Optional exits if the outer watch stays on

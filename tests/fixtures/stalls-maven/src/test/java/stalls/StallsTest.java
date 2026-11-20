@@ -23,6 +23,11 @@ class StallsTest {
   }
 
   @Test
+  void fallsBackToAScan() {
+    assertEquals(2000, Lookups.find("k"));
+  }
+
+  @Test
   void spinsForever() throws InterruptedException {
     Spinner.spin();
   }

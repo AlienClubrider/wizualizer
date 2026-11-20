@@ -645,7 +645,13 @@ final class Recorder {
       watching = want;
     }
     if (anyEntry != null) anyEntry.setEnabled(want && calls.size() < MAX_CALLS);
-    for (Outside o : outsides) if (o.exit != null && !o.exit.isEnabled()) o.exit.enable();
+    // Only the innermost open call can return next. An outer one's exit watch (say on
+    // java.util.Optional, for `orElseGet(() -> repo.find(...))`) would stop the thread at every
+    // Optional method that returns anywhere below it, inside Hibernate too: a 50x slowdown.
+    Outside innermost = outsides.peek();
+    for (Outside o : outsides) {
+      if (o.exit != null && o.exit.isEnabled() != (o == innermost)) o.exit.setEnabled(o == innermost);
+    }
   }
 
   /** Nothing that a method invoked to render a value could trigger. */
