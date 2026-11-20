@@ -12,13 +12,14 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
 import time
 import webbrowser
 from pathlib import Path
 
 from .diff import GitError, changed_lines, git_root
-from .ports import RecordingFailed, RecordRequest
+from .ports import DEFAULT_TIMEOUT_S, RecordingFailed, RecordRequest
 from .trace import make_trace
 from .viewer.render import render_html
 
@@ -40,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--python", help="interpreter to run pytest with (default: project .venv, else this one)")
     common.add_argument("--java-home", help="JDK to record Java tests with (default: $JAVA_HOME, else javac on PATH)")
     common.add_argument("--max-steps", type=int, default=10_000, help="stop recording a test after this many steps")
+    common.add_argument("--timeout", type=float, metavar="SECONDS", help=TIMEOUT_HELP)
 
     serve = sub.add_parser("serve", parents=[common], help="web app listing every test as a flow (the default)")
     serve.add_argument("--port", type=int, help="port on 127.0.0.1 (default: 7357, else any free one)")
@@ -62,14 +64,42 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--test-steps", action="store_true",
                      help="open the viewer with the test's own steps shown (default: only the code under test)")
     run.add_argument("--max-steps", type=int, default=10_000, help="stop recording after this many steps")
+    run.add_argument("--timeout", type=float, metavar="SECONDS", help=TIMEOUT_HELP)
     args = parser.parse_args(argv)
-    if args.command == "run":
-        return run_one(args)
+    args.timeout = record_timeout(args.timeout)
+    # SIGTERM (`timeout`, a service manager) stops wiz like Ctrl+C, so a running recording is
+    # stopped with it (its test JVM and build too) instead of being left behind.
+    signal.signal(signal.SIGTERM, _interrupt)
     try:
+        if args.command == "run":
+            return run_one(args)
         return {"serve": cmd_serve, "record": cmd_record, "list": cmd_list}[args.command](args)
     except RecordingFailed as exc:
         print(f"wiz: {exc}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("wiz: stopped", file=sys.stderr)
+        return 130
+
+
+TIMEOUT_HELP = (f"stop a test still running this long after it starts under the recorder "
+                f"(default: $WIZ_RECORD_TIMEOUT, else {DEFAULT_TIMEOUT_S:g}; 0 = no limit)")
+
+
+def record_timeout(cli_value: float | None) -> float | None:
+    """--timeout, else $WIZ_RECORD_TIMEOUT, else the default; 0 means no limit (None)."""
+    value = cli_value
+    if value is None:
+        env = os.environ.get("WIZ_RECORD_TIMEOUT", "").strip()
+        try:
+            value = float(env) if env else DEFAULT_TIMEOUT_S
+        except ValueError:
+            value = DEFAULT_TIMEOUT_S
+    return value if value > 0 else None
+
+
+def _interrupt(_signum, _frame):
+    raise KeyboardInterrupt
 
 
 def run_one(args) -> int:
@@ -89,14 +119,14 @@ def run_one(args) -> int:
             from .java.recorder import JavaRecorder
             from .java.source import JavaSource
 
-            request = RecordRequest(args.test, root, cwd, args.max_steps, args.java_home)
+            request = RecordRequest(args.test, root, cwd, args.max_steps, args.java_home, timeout_s=args.timeout)
             trace = make_trace(JavaRecorder(), JavaSource(java_home=args.java_home), request, changes, diff_info,
                                show_test_steps=args.test_steps)
         else:
             from .python.recorder import PythonRecorder
             from .python.source import PythonSource
 
-            request = RecordRequest(args.test, root, cwd, args.max_steps, args.python)
+            request = RecordRequest(args.test, root, cwd, args.max_steps, args.python, timeout_s=args.timeout)
             trace = make_trace(PythonRecorder(), PythonSource(), request, changes, diff_info,
                                show_test_steps=args.test_steps)
     except RecordingFailed as exc:
@@ -140,7 +170,7 @@ def open_workspace(args):
         languages["python"] = PythonLanguage(root, args.python)
     if "java" in project.languages:
         languages["java"] = JavaLanguage(root, args.java_home)
-    return Workspace(root, languages, base=args.base, max_steps=args.max_steps), project
+    return Workspace(root, languages, base=args.base, max_steps=args.max_steps, timeout_s=args.timeout), project
 
 
 def cmd_serve(args) -> int:

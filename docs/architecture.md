@@ -34,8 +34,9 @@ plus discovery and a change probe (`languages.py`).
   into the project's own interpreter via `PYTHONPATH`), the change-probe
   plugin, AST statements and flowcharts.
 - `java/`: build detection, the JDI recorder and probe adapters (with
-  `diagnose.py`: why a build never reached the test, in one line), flowcharts,
-  and `helper/` (the Java side: `Recorder.java` the JDI recorder,
+  `diagnose.py`: why a build never reached the test, in one line;
+  `teardown.py`: stopping the helper, the test JVM and the build for good),
+  flowcharts, and `helper/` (the Java side: `Recorder.java` the JDI recorder,
   `Framework.java` the Spring hops it tells as one step each).
 - `viewer/`: the HTML/CSS/JS, inlined by `render.py` into one file with a
   Content-Security-Policy that blocks all network access. `theme.css` holds

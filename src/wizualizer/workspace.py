@@ -15,7 +15,7 @@ from .diff import FileChange, GitError, changed_lines, default_base, git_root
 from .discovery import Flow
 from .functions import Function, catalog
 from .languages import Language
-from .ports import RecordingFailed, RecordRequest
+from .ports import DEFAULT_TIMEOUT_S, RecordingFailed, RecordRequest
 from .store import Store
 from .trace import make_trace
 
@@ -44,11 +44,12 @@ class DiffState:
 
 class Workspace:
     def __init__(self, root: Path, languages: dict[str, Language], base: str | None = None,
-                 max_steps: int = 10_000, store: Store | None = None):
+                 max_steps: int = 10_000, store: Store | None = None, timeout_s: float | None = DEFAULT_TIMEOUT_S):
         self.root = root
         self.languages = languages
         self.base = base
         self.max_steps = max_steps
+        self.timeout_s = timeout_s
         self.store = store or Store(root)
         self.store.ensure()
         self._flows: tuple[str, list[Flow]] | None = None  # (source hash, flows)
@@ -128,7 +129,8 @@ class Workspace:
         if trace is not None or not record:
             return trace
         lang = self.languages[flow.language]
-        request = RecordRequest(flow.id, self.root, self.root, self.max_steps, lang.interpreter(), progress)
+        request = RecordRequest(flow.id, self.root, self.root, self.max_steps, lang.interpreter(), progress,
+                                self.timeout_s)
         try:
             trace = make_trace(lang.recorder(), lang.source(), request,
                                diff.changes, diff.info if diff.available else None)

@@ -3,7 +3,9 @@ recorder attached over JDWP (see helper/wiz/Recorder.java).
 
 The recorder waits for as long as the build runs: a big multi-project build can configure and
 compile for many minutes before the test JVM starts. When the build ends without the test JVM
-connecting, diagnose.explain says why in one line, with a hint and the full build output.
+connecting, diagnose.explain says why in one line, with a hint and the full build output. Once
+the test JVM connects, the test has request.timeout_s to finish; then the helper, the test JVM
+and the build are stopped (see teardown).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..ports import RecordingFailed, RecordRequest
-from . import containers, diagnose
+from . import containers, diagnose, teardown
 from .helper import JdkMissing, find_jdk, helper_command
 from .project import (Build, JavaTest, ProjectError, SourceIndex, detect_build, gradle_init_script, gradle_task,
                       resolve_test)
@@ -57,10 +59,16 @@ class JavaRecorder:
             for p in index.packages:
                 args += ["--package", p]
             run = attach_and_build(helper + args, build,
-                                   lambda agent, init: build.command(test, agent, init, task), jdk, request.progress)
-            if not out.exists():
+                                   lambda agent, init: build.command(test, agent, init, task), jdk, request.progress,
+                                   request.timeout_s)
+            if not out.exists() and not run.timed_out:
                 raise failure(build, run, test.id, task)
-            recording = json.loads(out.read_text(encoding="utf-8"))
+            recording = json.loads(out.read_text(encoding="utf-8")) if out.exists() else None
+            # Stopped at the timeout: keep the recording only if the test method had already ended
+            # (or hit the step budget) and just the rest of the test JVM was slow to exit.
+            if run.timed_out and (recording is None or (recording["test"]["outcome"] == "unknown"
+                                                        and not recording["truncated"])):
+                raise timed_out(build, run, test.id, request.timeout_s)
 
         if not recording["steps"]:
             raise RecordingFailed(
@@ -104,6 +112,7 @@ class BuildRun:
     connected: bool  # the test JVM connected to the recorder
     helper_err: str
     started: float  # when the build started (time.time())
+    timed_out: bool = False  # the test ran past the timeout and was stopped
 
 
 def _listening_address(proc: subprocess.Popen) -> str:
@@ -117,20 +126,26 @@ def _listening_address(proc: subprocess.Popen) -> str:
 
 
 def attach_and_build(helper_cmd: list[str], build: Build, command, jdk: Path,
-                     progress: Callable[[str], None] | None = None) -> BuildRun:
+                     progress: Callable[[str], None] | None = None, timeout_s: float | None = None) -> BuildRun:
     """Start the helper (it listens for the test JVM), then run the build with the debug agent.
 
     command(agent, init_script) -> the build command line. Waits for the build to finish, however
-    long it takes; the helper is stopped then unless the test JVM connected to it.
+    long it takes to start the test JVM. Once the test JVM connects, it has timeout_s seconds (None
+    or 0: no limit); after that the helper, the test JVM and the build are stopped. They are also
+    stopped if this is interrupted (Ctrl+C, SIGTERM) or raises.
     """
-    rec = subprocess.Popen(helper_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    # stdin stays open and unused: the helper exits (and ends the test JVM) when wiz goes away.
+    rec = subprocess.Popen(helper_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True)
+    live = teardown.LiveRecording(rec)
     err_chunks: list[str] = []
     drain = threading.Thread(target=lambda: err_chunks.append(rec.stderr.read()), daemon=True)
     drain.start()
-    connected = threading.Event()
+    connected, finished, timed_out = threading.Event(), threading.Event(), threading.Event()
     note = progress or (lambda _msg: None)
+    clean = False
     try:
-        address = _listening_address(rec)
+        live.address = address = _listening_address(rec)
 
         def watch_helper():
             for line in rec.stdout:  # keeps draining so the helper never blocks on a full pipe
@@ -138,29 +153,49 @@ def attach_and_build(helper_cmd: list[str], build: Build, command, jdk: Path,
                     connected.set()
                     note("the test JVM connected: recording the test")
 
+        def watchdog():
+            while not connected.wait(1):
+                if finished.is_set():
+                    return
+            if timeout_s and not finished.wait(timeout_s):
+                timed_out.set()
+                note(f"the test is still running after {_duration(timeout_s)}: stopping it")
+                live.stop()
+
         threading.Thread(target=watch_helper, daemon=True).start()
+        threading.Thread(target=watchdog, daemon=True).start()
         agent = f"-agentlib:jdwp=transport=dt_socket,server=n,suspend=y,address={address}"
         init = gradle_init_script() if build.tool == "gradle" else None
         started = time.time()
-        output, exit_code = _run_build(build, command(agent, init) + extra_args(build.tool), jdk, note)
-        if connected.is_set():
+        output, exit_code = _run_build(build, command(agent, init) + extra_args(build.tool), jdk, note, live)
+        finished.set()
+        if connected.is_set() and not timed_out.is_set():
             try:
                 rec.wait(timeout=HELPER_EXIT_WAIT_S)
             except subprocess.TimeoutExpired:
                 pass
+        clean = True
     finally:
-        if rec.poll() is None:
-            rec.kill()
-            rec.wait()
+        finished.set()
+        if clean:
+            if rec.poll() is None:
+                rec.kill()
+                rec.wait()
+            live.forget()
+        else:
+            live.stop()
     drain.join(timeout=5)
-    return BuildRun(output, exit_code, connected.is_set(), "".join(err_chunks), started)
+    return BuildRun(output, exit_code, connected.is_set(), "".join(err_chunks), started, timed_out.is_set())
 
 
-def _run_build(build: Build, cmd: list[str], jdk: Path, note: Callable[[str], None]) -> tuple[str, int | None]:
+def _run_build(build: Build, cmd: list[str], jdk: Path, note: Callable[[str], None],
+               live: teardown.LiveRecording) -> tuple[str, int | None]:
     env = {**os.environ, "JAVA_HOME": str(jdk)}
     note(f"{build.tool}: starting")
     proc = subprocess.Popen(cmd, cwd=build.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL, text=True, errors="replace", bufsize=1)
+                            stdin=subprocess.DEVNULL, text=True, errors="replace", bufsize=1,
+                            **teardown.build_session())
+    live.build = proc
     lines = [f"$ {shlex.join(cmd)}\n"]
     size = 0
     assert proc.stdout
@@ -174,6 +209,20 @@ def _run_build(build: Build, cmd: list[str], jdk: Path, note: Callable[[str], No
         if msg:
             note(msg)
     return "".join(lines), proc.wait()
+
+
+def _duration(seconds: float) -> str:
+    return f"{seconds / 60:g} min" if seconds >= 60 and seconds % 60 == 0 else f"{seconds:g} s"
+
+
+def timed_out(build: Build, run: BuildRun, test: str, timeout_s: float) -> RecordingFailed:
+    """The test ran past the timeout under the recorder and was stopped."""
+    reason = f"{test} was still running after {_duration(timeout_s)} under the recorder, so wiz stopped it"
+    hint = ("raise the limit with --timeout SECONDS (or WIZ_RECORD_TIMEOUT; 0 = none). "
+            "A test that starts a big Spring context can take minutes under the debugger")
+    tail = run.output if len(run.output) <= 4_000 else "…\n" + run.output[-4_000:]
+    return RecordingFailed(f"Recording timed out: {reason}.\nFix: {hint}.\n\n{build.tool} output:\n{tail}",
+                           reason, hint, run.output[-LOG_LIMIT:])
 
 
 def read_report(path: Path, test: JavaTest, not_before: float = 0.0) -> dict | None:

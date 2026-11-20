@@ -38,7 +38,14 @@ class PythonRecorder:
                 "-p", "no:cacheprovider",
                 "-q", "--no-header", "-rN",
             ]
-            proc = subprocess.run(cmd, cwd=request.cwd, env=env, capture_output=True, text=True)
+            try:
+                proc = subprocess.run(cmd, cwd=request.cwd, env=env, capture_output=True, text=True,
+                                      timeout=request.timeout_s or None)
+            except subprocess.TimeoutExpired as exc:
+                reason = f"{request.test_id} was still running after {request.timeout_s:g} s, so wiz stopped it"
+                hint = "raise the limit with --timeout SECONDS (or WIZ_RECORD_TIMEOUT; 0 = none)"
+                raise RecordingFailed(f"Recording timed out: {reason}.\nFix: {hint}.", reason, hint,
+                                      _text(exc.stdout) + _text(exc.stderr)) from exc
             if not out.exists():
                 raise RecordingFailed(
                     f"pytest did not produce a recording (exit {proc.returncode}).\n"
@@ -52,6 +59,10 @@ class PythonRecorder:
             )
         recording["pytest_output"] = proc.stdout[-4000:]
         return recording
+
+
+def _text(output: str | bytes | None) -> str:
+    return output.decode("utf-8", "replace") if isinstance(output, bytes) else output or ""
 
 
 def default_interpreter(root: Path) -> str:

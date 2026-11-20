@@ -39,6 +39,7 @@ output (also in `.wiz/logs/`). "← functions" in the viewer goes back.
 | `--python PATH` | interpreter for pytest. Default: the project's `.venv`/`venv`, else `$VIRTUAL_ENV`, else a `python3` on PATH that has pytest |
 | `--java-home DIR` | JDK. Default: `$JAVA_HOME`, else `javac` on PATH |
 | `--max-steps N` | stop recording a test after N steps (default 10000); the viewer says "truncated" |
+| `--timeout SECONDS` | stop a test still running this long after it starts under the recorder. Default: `$WIZ_RECORD_TIMEOUT`, else 300; `0` for no limit. A Java build's own time before the test JVM starts does not count |
 
 ## `wiz record`
 
@@ -64,7 +65,8 @@ you can open anywhere or attach to a CI run. No server.
   test (`com.acme.BankTest#movesMoney`, simple class name if unique, or a path
   to the `.java` file; nested: `OuterTest$Inner#method`).
 - `--base REF`: mark changed lines (leave out to skip).
-- `--out DIR` (default `.wiz`), `--python`, `--java-home`, `--max-steps`.
+- `--out DIR` (default `.wiz`), `--python`, `--java-home`, `--max-steps`,
+  `--timeout`.
 - `--lang python|java`: when the id is ambiguous.
 - `--test-steps`: open with the test's own steps shown (see below).
 - A node id that matches several tests records the first one only.

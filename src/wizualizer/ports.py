@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Protocol
 
 
+DEFAULT_TIMEOUT_S = 300.0
+
+
 @dataclass(frozen=True)
 class RecordRequest:
     test_id: str  # e.g. "tests/test_orders.py::test_free_shipping"
@@ -23,6 +26,7 @@ class RecordRequest:
     max_steps: int = 10_000
     interpreter: str | None = None  # language runtime to use, if the recorder needs one
     progress: Callable[[str], None] | None = field(default=None, compare=False)  # e.g. "> Task :app:test"
+    timeout_s: float | None = DEFAULT_TIMEOUT_S  # the test's time to finish once it starts; None or 0: no limit
 
 
 class RecordingFailed(RuntimeError):

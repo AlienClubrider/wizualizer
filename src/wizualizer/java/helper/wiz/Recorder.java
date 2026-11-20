@@ -185,7 +185,7 @@ final class Recorder {
       events.sort(Comparator.comparingInt(this::order));
       boolean dead = false;
       try {
-        unwatch(); // values are rendered by invoking JDK methods: no entry/exit events while that runs
+        unwatch(); // no entry/exit events while this event set is handled
       } catch (com.sun.jdi.VMDisconnectedException gone) {
         break;
       }
@@ -554,7 +554,6 @@ final class Recorder {
     else if (e.method().returnTypeName().equals("void")) v = null;
     else v = e.returnValue();
     boolean isVoid = v == null && e.method().returnTypeName().equals("void");
-    values.setThread(thread);
     Map<String, Object> s = step("return", f, f.line);
     s.put("value", isVoid ? "void" : values.render(v));
     popFrame(f);
@@ -849,7 +848,6 @@ final class Recorder {
 
   private Map<String, Object> mockArgs(Method m, List<Value> items) {
     Outline.Method src = sourceMethod(m);
-    values.setThread(thread);
     Map<String, Object> args = new LinkedHashMap<>();
     for (int i = 0; i < items.size(); i++) {
       String name = src != null && src.params().size() == items.size() ? src.params().get(i) : "arg" + i;
@@ -900,7 +898,6 @@ final class Recorder {
       Outline.Method src = sourceMethod(m);
       if (src != null && src.params().size() == argValues.size()) names.addAll(src.params());
     }
-    values.setThread(thread);
     Map<String, Object> args = new LinkedHashMap<>();
     for (int i = 0; i < argValues.size(); i++) {
       args.put(i < names.size() ? names.get(i) : "arg" + i, values.render(argValues.get(i)));
@@ -918,7 +915,6 @@ final class Recorder {
       Value v;
       if (o.method.isConstructor()) v = thread.frame(0).thisObject();
       else v = o.method.returnTypeName().equals("void") ? null : e.returnValue();
-      values.setThread(thread);
       boolean isVoid = v == null && o.method.returnTypeName().equals("void");
       o.call.put("value", isVoid ? "void" : values.render(v));
     }
@@ -1084,7 +1080,7 @@ final class Recorder {
   }
 
   // values ------------------------------------------------------------------------------------
-  /** Locals then fields of `this`, read before anything is rendered (rendering may resume the thread). */
+  /** Locals then fields of `this`, read before anything is rendered. */
   private Map<String, Value> snapshot(StackFrame jf) {
     Map<String, Value> raw = new LinkedHashMap<>();
     try {
@@ -1106,7 +1102,6 @@ final class Recorder {
   }
 
   private Map<String, Object> render(Map<String, Value> raw) {
-    values.setThread(thread);
     Map<String, Object> out = new LinkedHashMap<>();
     int i = 0;
     for (Map.Entry<String, Value> e : raw.entrySet()) {
@@ -1188,12 +1183,42 @@ final class Recorder {
     System.out.flush();
     try {
       VirtualMachine vm = lc.accept(args);
+      // However this helper ends (done, SIGTERM from wiz, wiz gone), the test JVM must not
+      // outlive it suspended: JDWP's Exit ends it even with every thread stopped at an event.
+      Runtime.getRuntime().addShutdownHook(new Thread(() -> endTestJvm(vm), "wiz-end-test-jvm"));
       System.out.println("CONNECTED");
       System.out.flush();
       return vm;
     } finally {
       lc.stopListening(args);
     }
+  }
+
+  private static void endTestJvm(VirtualMachine vm) {
+    try {
+      vm.exit(1);
+    } catch (RuntimeException alreadyGone) {
+      // it exited on its own
+    }
+  }
+
+  /**
+   * wiz keeps this process's stdin open and never writes to it. When it closes, wiz has gone
+   * (even by kill -9): exit, which ends the test JVM too (see accept).
+   */
+  static void exitWithParent() {
+    Thread t = new Thread(() -> {
+      try {
+        while (System.in.read() >= 0) {
+          // nothing is ever sent
+        }
+      } catch (IOException ignored) {
+        // closed
+      }
+      System.exit(143);
+    }, "wiz-parent-watch");
+    t.setDaemon(true);
+    t.start();
   }
 
   static List<String> minimalPrefixes(List<String> pkgs) {
