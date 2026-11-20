@@ -105,6 +105,9 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .sq .msg.raise line, .sq .msg.raise path { stroke: var(--miss); } .sq .msg.raise text { fill: var(--miss); }
 .sq .msg .hit { stroke: transparent; stroke-width: 14; }
 .sq .msg { cursor: pointer; }
+.sq .msg.hop path:not(.hit) { stroke: var(--muted); stroke-dasharray: 2 3; }
+.sq .msg.hop text { font-style: italic; }
+.vars tr.hop td { color: var(--muted); font-style: italic; }
 .sq-head { position: sticky; top: 0; z-index: 1; background: var(--panel); }
 
 /* source ---------------------------------------------------------------- */
@@ -196,6 +199,8 @@ ol.stack { list-style: none; margin: 0; padding: 0; font-family: var(--mono); fo
 .fc .callchip text { font-size: 11.5px; fill: var(--cur); font-weight: 600; }
 .fc .callchip:hover rect.pill, .fc .callchip:focus-visible rect.pill { fill: var(--cur-bg); stroke-width: 2; }
 .fc .callchip:focus { outline: none; }
+.fc .callchip.hop rect.pill { stroke: var(--muted); stroke-dasharray: 3 2; }
+.fc .callchip.hop text { fill: var(--muted); font-style: italic; }
 .lg.call { border: 1.5px solid var(--cur); border-radius: 6px; }
 .stack li { padding: 0; }
 .stack button.frame { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: 0 6px 6px 0; padding: 8px 8px; min-height: 40px; font: inherit; overflow-wrap: anywhere; }

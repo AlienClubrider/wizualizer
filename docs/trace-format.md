@@ -82,6 +82,13 @@ A new required field, or a changed meaning, bumps `version`.
       "targets": ["server/src/…/UserAccountServiceImpl.java:46"] }   // project code it stood for
   ],
 
+  // Framework hops a call went through, one line each (Java/Spring). Optional (older traces have none).
+  "framework": [
+    { "frame": 4, "line": 21, "after": 6,             // told at frame 4's line 21, after steps[6]
+      "kind": "transaction",                          // transaction | mvc | validation | aspect | async | security
+      "label": "@Transactional TransferService.transfer: began a transaction" }
+  ],
+
   // PR changed-line coverage; null without --base.
   "coverage": {
     "files": { "shop/pricing.py": { "27": "ran", "28": "not_run", "4": "import_time" } },

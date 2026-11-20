@@ -80,13 +80,20 @@
   const outsideAt = {}; // step -> calls made after it
   for (const c of outside) (outsideAt[c.pos] = outsideAt[c.pos] || []).push(c);
   const isStandIn = (c) => c.targets.length > 0;
+  // Framework hops (T.framework): a transaction, MVC dispatch, validation, an aspect. One line each,
+  // told at the project frame whose call went through them.
+  const hops = (T.framework || [])
+    .filter((n) => frames[n.frame])
+    .map((n) => ({ ...n, pos: posOf(n.after), fn: frames[n.frame].fn }));
+  const hopsAt = {}; // step -> hops after it
+  for (const n of hops) (hopsAt[n.pos] = hopsAt[n.pos] || []).push(n);
   const shortName = (c) => (c.name.startsWith('new ') ? c.name.slice(4) : c.name);
   const ownerOf = (c) => (c.type ? c.type.replace(/\$/g, '.').split('.').pop() : '');
   const whyNotRun = (c) => (c.mock ? 'replaced by a mock in the test' : c.stub ? 'replaced by a stub in the test'
     : 'the call never reached this code');
   const stoodIn = (c) => (c.mock ? 'the mock' : c.stub ? 'the stub' : 'it');
   const argsText = (c) => Object.entries(c.args || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
-  const resultText = (c) => (c.raised ? `raised ${c.error || 'an exception'}` : 'value' in c ? c.value : 'not recorded (built-in function)');
+  const resultText = (c) => (c.raised ? `raised ${c.error || 'an exception'}` : 'value' in c ? c.value : 'not recorded');
   const callLabel = (c) => {
     const own = ownerOf(c);
     return `${own && !c.name.startsWith('new ') && own !== c.name ? own + '.' : ''}${c.name}(${argsText(c)})`;
@@ -138,8 +145,18 @@
       if (!entry) list.push((entry = { kind: stand ? 'stand' : 'lib', key, name: c.name, calls: [] }));
       entry.calls.push(c);
     }
+    for (const n of hops) {
+      if (n.fn !== fnId) continue;
+      const node = flow.nodeFor(n.line);
+      if (node === null || node === undefined) continue;
+      const list = (more[node] = more[node] || []);
+      let entry = list.find((e) => e.kind === 'hop');
+      if (!entry) list.push((entry = { kind: 'hop', name: '', hops: [] }));
+      entry.hops.push(n);
+    }
+    const rank = { hop: 0, stand: 1, lib: 2 };
     for (const [node, list] of Object.entries(more)) {
-      list.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'stand' ? -1 : 1));
+      list.sort((a, b) => rank[a.kind] - rank[b.kind]);
       out[node] = (out[node] || []).concat(list);
     }
     return (callsFrom[fnId] = out);
@@ -198,6 +215,13 @@
         messages.push({ step: i, from, to, label: `${c.name}(${args.join(', ')})`, kind: 'call', stand: c });
         messages.push({ step: i, from: to, to: from, label: c.raised ? `raises ${c.error || ''}` : `→ ${resultText(c)}`,
           kind: c.raised ? 'raise' : 'ret', stand: c });
+        last = messages.length - 1;
+      }
+      // Framework hops after this step: a note on the actor whose call went through them.
+      for (const n of hopsAt[i] || []) {
+        const at = actorOf(n.frame);
+        addActor(at);
+        messages.push({ step: i, from: at, to: at, label: n.label, kind: 'hop' });
         last = messages.length - 1;
       }
     });
@@ -264,6 +288,7 @@
       if (c.kind === 'real') return `↘ ${fns[c.callee].name}${times(c.steps.length)}`;
       if (c.kind === 'stand') return `↘ ${c.name}${times(c.calls.length)} · ${c.calls[0].mock ? 'mock' : c.calls[0].stub ? 'stub' : 'not run'}`;
       if (c.kind === 'lib') return `${c.name}()${times(c.calls.length)}`;
+      if (c.kind === 'hop') return `${c.hops[0].label}${c.hops.length > 1 ? ` +${c.hops.length - 1}` : ''}`;
       return `+${c.rest.length} call${c.rest.length === 1 ? "" : "s"}`;
     };
     const chipW = (c) => Math.min(20 + chipText(c).length * CALL_CH, 240);
@@ -356,6 +381,9 @@
           const first = c.calls[0], target = fns[first.targets[0]];
           label = `Open ${target.qualname}: not run in this flow, ${whyNotRun(first)}`;
           tip = `${label}\n${callLabel(first)} → ${resultText(first)}`;
+        } else if (c.kind === 'hop') {
+          label = `Go to the framework step: ${c.hops[0].label}`;
+          tip = c.hops.map((k) => k.label).join('\n');
         } else if (c.kind === 'lib') {
           label = `Show what ${c.name} was called with and returned`;
           tip = c.calls.slice(0, 3).map((k) => `${callLabel(k)} → ${resultText(k)}`).join('\n');
@@ -490,11 +518,15 @@
       h('rect', { class: 'act', x: ax(act.actor) - 4 + act.level * 5, y: y1, width: 8, height: Math.max(6, y2 - y1), rx: 2 }, svg);
     }
     const els = messages.map((m, k) => {
-      const g = h('g', { class: `msg ${m.kind === 'call' ? 'call' : m.kind === 'raise' ? 'ret raise' : 'ret'}${m.stand ? ' stand' : ''}` }, svg);
+      const g = h('g', { class: `msg ${m.kind === 'call' ? 'call' : m.kind === 'raise' ? 'ret raise' : m.kind === 'hop' ? 'hop' : 'ret'}${m.stand ? ' stand' : ''}` }, svg);
       const y = rowY(k), x1 = ax(m.from), x2 = ax(m.to);
       const marker = m.kind === 'raise' ? 'sa-raise' : 'sa';
       let shape;
-      if (x1 === x2) {
+      if (m.kind === 'hop') {
+        shape = h('path', { d: `M${x1 + 4},${y} h14` }, g);
+        h('text', { x: x1 + 22, y: y + 4 }, g, clip(m.label, 64));
+        h('path', { class: 'hit', d: `M${x1},${y} h260` }, g);
+      } else if (x1 === x2) {
         shape = h('path', { d: `M${x1 + 4},${y - 6} h26 v12 h-24`, 'marker-end': `url(#${marker})` }, g);
         h('text', { x: x1 + 36, y: y + 4 }, g, clip(m.label, 34));
         h('path', { class: 'hit', d: `M${x1},${y} h160` }, g);
@@ -519,7 +551,7 @@
     seqView.els.forEach((e, j) => {
       e.g.classList.toggle('future', j > k);
       e.g.classList.toggle('cur', j === k);
-      e.shape.setAttribute('marker-end', `url(#${j === k ? 'sa-cur' : e.marker})`);
+      if (!e.g.classList.contains('hop')) e.shape.setAttribute('marker-end', `url(#${j === k ? 'sa-cur' : e.marker})`);
     });
     if (k >= 0) keepInView($('seq'), 0, (seqView.els[k].y - 13) * zoom.seq + seqView.HH * zoom.seq, 0, 26 * zoom.seq);
   }
@@ -562,6 +594,11 @@
       const tr = h('tr', { class: 'exc' }, tbl);
       h('td', { class: 'n' }, tr, 'raised');
       h('td', {}, tr, `${s.type}: ${s.message}`);
+    }
+    for (const n of stand ? [] : hopsAt[cur] || []) {
+      const tr = h('tr', { class: 'hop' }, tbl);
+      h('td', { class: 'n' }, tr, 'then the framework');
+      h('td', {}, tr, n.label);
     }
     const ol = $('stack');
     ol.replaceChildren();
@@ -824,7 +861,8 @@
     if (c.kind === 'real') followCall(c);
     else if (c.kind === 'stand') openStand(pickCall(c.calls));
     else if (c.kind === 'lib') showNote(c.calls, []);
-    else showNote(c.rest.flatMap((k) => (k.kind === 'real' ? [] : k.calls)), c.rest.filter((k) => k.kind === 'real'));
+    else if (c.kind === 'hop') follow((c.hops.find((k) => k.pos >= cur) || c.hops[0]).pos);
+    else showNote(c.rest.flatMap((k) => (k.kind === 'real' || k.kind === 'hop' ? [] : k.calls)), c.rest.filter((k) => k.kind === 'real'));
   }
   // Show the project code a mock or stub stood for, at the step the call came after.
   function openStand(c, k = 0) {

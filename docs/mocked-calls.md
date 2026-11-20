@@ -60,6 +60,9 @@ autoboxing or string concatenation). On a phone they collapse into one
 - The real code is matched statically: a call through a variable whose mock
   has no spec, or a name declared in many places (more than 8), is not
   matched and shows as a library call.
-- Calls made from inside a library callback (a lambda passed to a stream, say)
-  are not listed.
+- Calls made from inside a lambda that a library calls back (one passed to a
+  stream, say) are not listed. Project methods a library calls back (a
+  controller MockMvc dispatches to) list theirs.
+- Java: framework calls (MockMvc, Spring proxies, repositories) show no
+  result; see [java.md](java.md#limits).
 - Up to 3,000 such calls per recording.
