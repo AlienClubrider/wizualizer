@@ -79,6 +79,7 @@ access.
 - [Limits](docs/limits.md)
 - [Architecture](docs/architecture.md) and [trace format](docs/trace-format.md)
 - [Contributing](docs/contributing.md)
+- [Changelog](CHANGELOG.md): what changed in each release
 
 Light theme by default, dark with the ☾ button. Works on a phone.
 

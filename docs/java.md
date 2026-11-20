@@ -147,3 +147,5 @@ record; 1 of the 3 changed lines ran) and `#testCreditAccount_Success` (2 of 3).
   project's generated code (records, Lombok) show their values.
 - Only the framework hops listed under [Spring service slices](#spring-service-slices)
   are told. `@Cacheable`, events and other Spring features run unseen.
+- When an exception escapes MockMvc, its MVC step says "answered 200": the
+  response status was never set.
