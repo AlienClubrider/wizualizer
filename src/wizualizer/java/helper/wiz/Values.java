@@ -5,12 +5,10 @@ import com.sun.jdi.CharValue;
 import com.sun.jdi.ClassType;
 import com.sun.jdi.Field;
 import com.sun.jdi.InterfaceType;
-import com.sun.jdi.Method;
 import com.sun.jdi.ObjectReference;
 import com.sun.jdi.PrimitiveValue;
 import com.sun.jdi.ReferenceType;
 import com.sun.jdi.StringReference;
-import com.sun.jdi.ThreadReference;
 import com.sun.jdi.Value;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,9 +19,10 @@ import java.util.function.Predicate;
  * Bounded, crash-proof rendering of JDI values as short strings (depth 3, 8 items, 80 chars per
  * string, 240 in total), the same limits as the Python recorder.
  *
- * <p>Project objects are shown by their fields. JDK collections are read with toArray() and a
- * few JDK value types (BigDecimal, java.time, UUID) with toString(); nothing else is invoked, so
- * no project code runs while recording. Other library objects show as their class name.
+ * <p>Nothing is ever invoked in the test JVM: a method call on a thread stopped at an event can
+ * hit one of the recorder's own requests (or a lock the thread holds) and never return. Project
+ * objects are shown by their fields, JDK collections and a few JDK value types (BigDecimal,
+ * java.time, UUID, URI) are read from their fields, other objects show as their class name.
  */
 final class Values {
   static final int MAX_DEPTH = 3, MAX_ITEMS = 8, MAX_STR = 80, MAX_TOTAL = 240;
@@ -36,14 +35,9 @@ final class Values {
           "java.util.concurrent.atomic.AtomicBoolean");
 
   private final Predicate<ReferenceType> isProject;
-  private ThreadReference thread; // suspended by the current event; null = never invoke
 
   Values(Predicate<ReferenceType> isProject) {
     this.isProject = isProject;
-  }
-
-  void setThread(ThreadReference thread) {
-    this.thread = thread;
   }
 
   String render(Value v) {
@@ -77,8 +71,8 @@ final class Values {
     }
     if (name.startsWith("java.time.") || name.equals("java.math.BigDecimal") || name.equals("java.math.BigInteger")
         || name.equals("java.util.UUID") || name.equals("java.net.URI")) {
-      String s = invokeToString(o);
-      return s != null ? s : "<" + simple(name) + ">";
+      String s = JdkValues.text(o);
+      return s != null ? clip(s, MAX_STR) : "<" + simple(name) + ">";
     }
     if (depth <= 0) return "<" + simple(name) + ">";
     if (isProject.test(t)) return renderFields(o, t, depth);
@@ -113,64 +107,41 @@ final class Values {
     // Collections.unmodifiableList and friends wrap another collection that may be project code.
     ObjectReference inner = wrapped(o);
     if (inner != null) return render(inner, depth);
-    Value arr = invoke(o, "toArray", "()[Ljava/lang/Object;");
-    if (!(arr instanceof ArrayReference a)) return "<" + simple(o.referenceType().name()) + ">";
-    return renderArray(a, depth);
+    List<Value> items = new ArrayList<>();
+    int size = JdkCollections.items(o, MAX_ITEMS, items);
+    if (size < 0) return "<" + simple(o.referenceType().name()) + ">";
+    List<String> parts = new ArrayList<>();
+    for (Value item : items) parts.add(render(item, depth - 1));
+    if (size > items.size()) parts.add("…+" + (size - items.size()));
+    return "[" + String.join(", ", parts) + "]";
   }
 
   private String renderMap(ObjectReference o, int depth) {
     ObjectReference inner = wrapped(o);
     if (inner != null) return render(inner, depth);
-    Value entries = invoke(o, "entrySet", "()Ljava/util/Set;");
-    Value arr = entries instanceof ObjectReference e ? invoke(e, "toArray", "()[Ljava/lang/Object;") : null;
-    if (!(arr instanceof ArrayReference a)) return "<" + simple(o.referenceType().name()) + ">";
-    int n = Math.min(a.length(), MAX_ITEMS);
+    List<Value[]> entries = new ArrayList<>();
+    int size = JdkCollections.entries(o, MAX_ITEMS, entries);
+    if (size < 0) return "<" + simple(o.referenceType().name()) + ">";
     List<String> parts = new ArrayList<>();
-    for (Value item : n == 0 ? List.<Value>of() : a.getValues(0, n)) {
-      ObjectReference entry = (ObjectReference) item;
-      parts.add(render(field(entry, "key"), depth - 1) + "=" + render(field(entry, "value", "val"), depth - 1));
-    }
-    if (a.length() > MAX_ITEMS) parts.add("…+" + (a.length() - MAX_ITEMS));
+    for (Value[] kv : entries) parts.add(render(kv[0], depth - 1) + "=" + render(kv[1], depth - 1));
+    if (size > entries.size()) parts.add("…+" + (size - entries.size()));
     return "{" + String.join(", ", parts) + "}";
   }
 
   private ObjectReference wrapped(ObjectReference o) {
     if (!o.referenceType().name().startsWith("java.util.Collections$")) return null;
-    Value v = field(o, "c", "m", "list");
+    Value v = JdkCollections.field(o, "c", "m", "list");
     return v instanceof ObjectReference r ? r : null;
   }
 
   // JDI helpers -----------------------------------------------------------------------------
   private static Value field(ObjectReference o, String... names) {
-    for (String n : names) {
-      Field f = o.referenceType().fieldByName(n);
-      if (f != null) return o.getValue(f);
-    }
-    return null;
+    return JdkCollections.field(o, names);
   }
 
   private static String str(ObjectReference o, String fieldName) {
     Value v = field(o, fieldName);
     return v instanceof StringReference s ? s.value() : null;
-  }
-
-  private String invokeToString(ObjectReference o) {
-    Value v = invoke(o, "toString", "()Ljava/lang/String;");
-    return v instanceof StringReference s ? clip(s.value(), MAX_STR) : null;
-  }
-
-  /** Invoke a no-argument JDK method on the suspended thread. Never invoked on project types. */
-  private Value invoke(ObjectReference o, String name, String signature) {
-    if (thread == null) return null;
-    try {
-      ReferenceType t = o.referenceType();
-      if (!(t instanceof ClassType ct)) return null;
-      Method m = ct.concreteMethodByName(name, signature);
-      if (m == null || !m.declaringType().name().startsWith("java.")) return null;
-      return o.invokeMethod(thread, m, List.of(), ObjectReference.INVOKE_SINGLE_THREADED);
-    } catch (Exception e) {
-      return null;
-    }
   }
 
   private static boolean isEnum(ReferenceType t) {

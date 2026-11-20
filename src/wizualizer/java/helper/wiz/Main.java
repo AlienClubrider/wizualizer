@@ -79,6 +79,7 @@ public final class Main {
     if (root == null || out == null || test == null || !test.contains("#")) {
       throw new IllegalArgumentException("record needs --root, --out and --test pkg.Class#method");
     }
+    Recorder.exitWithParent();
     new Recorder(root, sourceRoots, packages, test, maxSteps, out).run(timeout);
   }
 
@@ -105,6 +106,7 @@ public final class Main {
     }
     java.util.Set<String> testIds = new java.util.HashSet<>(Files.readAllLines(tests, StandardCharsets.UTF_8));
     testIds.remove("");
+    Recorder.exitWithParent();
     new Probe(root, sourceRoots, packages, Probe.readWatch(watch), testIds, out).run(timeout);
   }
 

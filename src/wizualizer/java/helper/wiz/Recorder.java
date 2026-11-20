@@ -83,6 +83,8 @@ final class Recorder {
   private ThreadReference thread;
   private boolean windowOpen, windowDone, truncated;
   private String[] pending; // exception unwinding: {type, message}
+  private String[] escaping; // an exception the test method will not catch: {type, message}
+  private BreakpointRequest escapeCatch; // where it will be caught, outside the test method
   private String outcome = "not run", message = "";
   private int nextFrame = 1;
   // Calls from project code that run no project code (mocks, the JDK, libraries): one at a time.
@@ -149,7 +151,7 @@ final class Recorder {
       events.sort(Comparator.comparingInt(this::order));
       boolean dead = false;
       try {
-        disarm(); // values are rendered by invoking JDK methods: no entry events while that runs
+        disarm(); // no outside-call entry events while this event set is handled
       } catch (com.sun.jdi.VMDisconnectedException gone) {
         break;
       }
@@ -160,6 +162,7 @@ final class Recorder {
           else if (e instanceof MethodEntryEvent me && me.request() == adviceEntry) onMockAdvice(me);
           else if (e instanceof MethodExitEvent mx && outside != null && mx.request() == outside.exit) onOutsideExit(mx);
           else if (e instanceof MethodEntryEvent me) onEntry(me);
+          else if (e instanceof BreakpointEvent bp && bp.request() == escapeCatch) onEscaped(bp);
           else if (e instanceof BreakpointEvent bp) onLine(bp);
           else if (e instanceof ExceptionEvent ex) onException(ex);
           else if (e instanceof MethodExitEvent mx) onExit(mx);
@@ -425,7 +428,6 @@ final class Recorder {
     else if (e.method().returnTypeName().equals("void")) v = null;
     else v = e.returnValue();
     boolean isVoid = v == null && e.method().returnTypeName().equals("void");
-    values.setThread(thread);
     Map<String, Object> s = step("return", f, f.line);
     s.put("value", isVoid ? "void" : values.render(v));
     popFrame(f);
@@ -438,12 +440,30 @@ final class Recorder {
     Location thrown = e.location(), caught = e.catchLocation();
     boolean thrownInProject = sourceMethod(thrown.method()) != null && !isLambda(thrown.method());
     boolean caughtInProject = caught != null && classInfo(caught.declaringType()) != null;
-    if (!thrownInProject && caught != null && !caughtInProject) return; // library-internal
+    boolean escapes = !caughtInProject && escapesTest(caught);
+    if (!thrownInProject && caught != null && !caughtInProject && !escapes) return; // library-internal
     ObjectReference exc = e.exception();
     String type = Values.simple(exc.referenceType().name());
     Value msg = exc.getValue(exc.referenceType().fieldByName("detailMessage"));
     String text = msg instanceof StringReference sr ? Values.clip(sr.value(), 200) : "";
     pending = new String[] {type, text};
+    if (escapes) {
+      // No method exit event comes for a frame an exception pops, so the window would stay open
+      // after the test method: close it where the exception is caught (finally blocks still run).
+      escaping = pending;
+      if (escapeCatch != null) erm.deleteEventRequest(escapeCatch);
+      escapeCatch = null;
+      if (caught == null) {
+        unwind(0, false);
+        return;
+      }
+      escapeCatch = erm.createBreakpointRequest(caught);
+      escapeCatch.addThreadFilter(thread);
+      escapeCatch.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
+      escapeCatch.enable();
+      windowRequests.add(escapeCatch);
+      if (!thrownInProject) return;
+    }
     if (thrownInProject) unwind(thread.frameCount(), false);
     Frame f = stack.peek();
     if (f == null) return;
@@ -451,6 +471,30 @@ final class Recorder {
     s.put("type", type);
     s.put("message", text);
     emit(s);
+  }
+
+  /**
+   * Whether an exception caught at `caught` (null: not caught at all) leaves the test method: no
+   * frame of the catching method is at or above the test method's frame.
+   */
+  private boolean escapesTest(Location caught) throws IncompatibleThreadStateException {
+    Frame test = stack.peekLast();
+    if (test == null) return false;
+    if (caught == null) return true;
+    int n = thread.frameCount();
+    int above = n - test.depth + 1; // frames from the top down to the test method's, inclusive
+    if (above <= 0 || above > n) return false;
+    for (StackFrame f : thread.frames(0, above)) {
+      if (f.location().method().equals(caught.method())) return false;
+    }
+    return true;
+  }
+
+  /** The exception that left the test method is being caught: every project frame exited by it. */
+  private void onEscaped(BreakpointEvent e) {
+    if (!windowOpen || !e.thread().equals(thread) || escaping == null) return;
+    pending = escaping;
+    unwind(0, false);
   }
 
   // calls that run no project code -------------------------------------------------------------
@@ -524,7 +568,6 @@ final class Recorder {
     if (av.isEmpty() || !(av.get(av.size() - 1) instanceof com.sun.jdi.ArrayReference arr)) return;
     Outline.Method src = sourceMethod(outside.method);
     List<Value> items = arr.getValues();
-    values.setThread(thread);
     Map<String, Object> args = new LinkedHashMap<>();
     for (int i = 0; i < items.size(); i++) {
       String name = src != null && src.params().size() == items.size() ? src.params().get(i) : "arg" + i;
@@ -575,7 +618,6 @@ final class Recorder {
       Outline.Method src = sourceMethod(m);
       if (src != null && src.params().size() == argValues.size()) names.addAll(src.params());
     }
-    values.setThread(thread);
     Map<String, Object> args = new LinkedHashMap<>();
     for (int i = 0; i < argValues.size(); i++) {
       args.put(i < names.size() ? names.get(i) : "arg" + i, values.render(argValues.get(i)));
@@ -595,7 +637,6 @@ final class Recorder {
       Value v;
       if (o.method.isConstructor()) v = thread.frame(0).thisObject();
       else v = o.method.returnTypeName().equals("void") ? null : e.returnValue();
-      values.setThread(thread);
       boolean isVoid = v == null && o.method.returnTypeName().equals("void");
       o.call.put("value", isVoid ? "void" : values.render(v));
     }
@@ -751,7 +792,7 @@ final class Recorder {
   }
 
   // values ------------------------------------------------------------------------------------
-  /** Locals then fields of `this`, read before anything is rendered (rendering may resume the thread). */
+  /** Locals then fields of `this`, read before anything is rendered. */
   private Map<String, Value> snapshot(StackFrame jf) {
     Map<String, Value> raw = new LinkedHashMap<>();
     try {
@@ -773,7 +814,6 @@ final class Recorder {
   }
 
   private Map<String, Object> render(Map<String, Value> raw) {
-    values.setThread(thread);
     Map<String, Object> out = new LinkedHashMap<>();
     int i = 0;
     for (Map.Entry<String, Value> e : raw.entrySet()) {
@@ -843,12 +883,42 @@ final class Recorder {
     System.out.flush();
     try {
       VirtualMachine vm = lc.accept(args);
+      // However this helper ends (done, SIGTERM from wiz, wiz gone), the test JVM must not
+      // outlive it suspended: JDWP's Exit ends it even with every thread stopped at an event.
+      Runtime.getRuntime().addShutdownHook(new Thread(() -> endTestJvm(vm), "wiz-end-test-jvm"));
       System.out.println("CONNECTED");
       System.out.flush();
       return vm;
     } finally {
       lc.stopListening(args);
     }
+  }
+
+  private static void endTestJvm(VirtualMachine vm) {
+    try {
+      vm.exit(1);
+    } catch (RuntimeException alreadyGone) {
+      // it exited on its own
+    }
+  }
+
+  /**
+   * wiz keeps this process's stdin open and never writes to it. When it closes, wiz has gone
+   * (even by kill -9): exit, which ends the test JVM too (see accept).
+   */
+  static void exitWithParent() {
+    Thread t = new Thread(() -> {
+      try {
+        while (System.in.read() >= 0) {
+          // nothing is ever sent
+        }
+      } catch (IOException ignored) {
+        // closed
+      }
+      System.exit(143);
+    }, "wiz-parent-watch");
+    t.setDaemon(true);
+    t.start();
   }
 
   static List<String> minimalPrefixes(List<String> pkgs) {

@@ -39,6 +39,13 @@ survive real builds:
 - the file never changes and the agent's address comes in as
   `-Dwiz.jdwp=...`, so the configuration cache is reused between recordings.
 
+Once the test JVM connects, the test has **5 minutes** to finish (`--timeout
+SECONDS` or `WIZ_RECORD_TIMEOUT`; `0` for no limit). After that wiz stops it
+and says so in one line. Stopping, whether from the timeout, Ctrl+C, SIGTERM or
+even `kill -9` of wiz, ends the test JVM over JDWP (a suspended JVM ignores
+SIGTERM), then the build. A Gradle daemon goes back to idle instead of staying
+busy, so the next recording does not start a second one.
+
 If the build ends without the test JVM connecting, wiz says why in one line
 (compile error, no matching test, test task skipped, build failure,
 Docker missing, test JVM started without the agent) with a fix, and keeps the
@@ -67,9 +74,11 @@ and results, and a mocked call points at the project code it stood for
 ([mocked-calls.md](mocked-calls.md)). Lambdas are folded into the method that contains
 them. Variables are the locals plus `this.<field>` for every field of `this`.
 Objects from the project show their fields; JDK collections and maps their
-items; `BigDecimal`, `java.time` and `UUID` their value; other library objects
-their class name. The recorder only invokes JDK methods (`toArray`,
-`toString` of those value types), never project code.
+items; `BigDecimal`, `BigInteger`, `java.time`, `UUID` and `URI` their value;
+other library objects their class name. All of it is read from the objects'
+fields: the recorder never runs a method in the test JVM. (Calling one on a
+thread stopped at a debugger event could deadlock: the call can hit the
+recorder's own breakpoints, or wait on a lock the stopped thread holds.)
 
 ## The helper
 
