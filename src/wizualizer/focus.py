@@ -20,6 +20,16 @@ FRAMEWORK_HOOKS = {
 }
 _ACCESSOR = re.compile(r"(?:get|set|is|has)[A-Z_]\w*$")
 _CTOR = {"__init__", "__new__", "__post_init__"}
+# Overrides the framework calls on every request or event (servlet filters, interceptors,
+# listeners): plumbing around the code under test, never the code itself.
+FRAMEWORK_CALLBACKS = {
+    "doFilter", "doFilterInternal", "shouldNotFilter", "preHandle", "postHandle", "afterCompletion",
+    "supportsEventType", "supportsSourceType", "onApplicationEvent", "getObjectType", "afterPropertiesSet",
+    "addCorsMappings", "addFormatters", "addInterceptors", "addArgumentResolvers",
+}
+# Words too common in test and method names to say what a test is about.
+_FILLER = {"get", "set", "is", "has", "of", "to", "with", "and", "the", "a", "an", "by", "for", "new",
+           "on", "in", "it", "not", "when", "then", "should", "expect", "test", "given"}
 _WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+")
 
 
@@ -110,8 +120,9 @@ def function_under_test(
     line. Without one, the best match for what the test names, in this order:
     the test's method name and class (`OwnerControllerTests#processFindFormSuccess`
     -> `OwnerController.processFindForm`), its method name, its class, then any
-    real production code; among functions the test calls itself first. Constructors, getters/setters, framework hooks
-    (`@Bean`, `@InitBinder`, `@ModelAttribute`…) and calls that ran no line (an
+    real production code; among functions the test calls itself first (through a
+    servlet filter too). Constructors, getters/setters, framework hooks (`@Bean`,
+    `@InitBinder`, `@ModelAttribute`, filters…) and calls that ran no line (an
     inline mock) only win when nothing else ran.
     lines_of: function id -> its source lines; changed: file -> changed lines;
     functions: id -> {"qualname": …}; annotations: id -> annotation names.
@@ -121,21 +132,30 @@ def function_under_test(
     called: list[str] = []
     ran_lines: dict[str, int] = {}
     calls: dict[str, int] = {}
-    from_test: set[str] = set()  # called straight from test code: the test's own act/arrange calls
+    raised: set[str] = set()
+    # Called by the test itself, directly or through framework plumbing (a servlet filter):
+    # the test's own act/arrange calls.
+    from_test: set[str] = set()
+    direct_frames: set[str] = set()
     entry = None
     for step in steps:
         frame = frames[str(step["frame"])]
         fid = frame["fn"]
         if step["kind"] == "line":
             ran_lines[fid] = ran_lines.get(fid, 0) + 1
+        if step["kind"] == "return" and step.get("raised"):
+            raised.add(fid)
         if step["kind"] != "call":
             continue
         calls[fid] = calls.get(fid, 0) + 1
-        parent = frames.get(str(frame.get("parent")))
+        parent_id = str(frame.get("parent"))
+        parent = frames.get(parent_id)
         if entry is None and parent is None:
             entry = fid
-        if parent is not None and parent["fn"] in test_fns:
+        if parent is not None and (parent["fn"] in test_fns or (
+                parent_id in direct_frames and _is_callback(functions, parent["fn"]))):
             from_test.add(fid)
+            direct_frames.add(str(step["frame"]))
         if fid not in test_fns and fid not in called:
             called.append(fid)
     for fid in called:
@@ -152,34 +172,53 @@ def function_under_test(
     test_cls, test_words = subject_of(functions.get(entry, {}).get("qualname", "")) if entry else ("", [])
 
     def rank(fid: str) -> int:
+        """0 names class and method, 1 names the method, 2 the class, 3 other code,
+        4 a hook or constructor that raised, 5 an accessor, 6 hooks, constructors, mocks."""
         cls, method = _method(functions.get(fid, {}).get("qualname", ""))
         trivial = (
-            method == "<init>" or method in _CTOR
+            method == "<init>" or method in _CTOR or method in FRAMEWORK_CALLBACKS
             or bool(annotations.get(fid, set()) & FRAMEWORK_HOOKS)
             or not ran_lines.get(fid)
         )
+        if trivial:
+            return 4 if fid in raised and ran_lines.get(fid) else 6
         accessor = (bool(_ACCESSOR.match(method)) and fid not in callers
                     and ran_lines.get(fid, 0) <= 2 * calls.get(fid, 1))
         words = _words(method)
-        names_method = (not trivial and len(method) >= 4 and _contains(test_words, words))
+        # A getter or setter must be named in full (`getOptionValues`): `setName` is not what
+        # `validateWithInvalidPetName` is about.
+        names_method = len(method) >= 4 and (
+            _contains(test_words, words) if accessor else _names(test_words, words))
         names_class = bool(test_cls) and cls == test_cls
-        if names_method and names_class:
-            return 0
         if names_method:
-            return 1
-        if trivial:
-            return 5
+            return 0 if names_class else 1
         if accessor:
-            return 4
+            return 5
         return 2 if names_class else 3
 
     # What the test calls itself beats what that code calls in turn (the controller, not the
     # service it delegates to). Naming the class under test beats that (a controller behind a
     # filter), and plain production code beats setters, constructors and mocks the test ran.
     ranks = {fid: rank(fid) for fid in called}
-    order = [(0, False), (1, True), (2, False), (3, True), (1, False), (3, False), (4, False), (5, False)]
+    order = [(0, False), (1, True), (2, False), (3, True), (1, False), (3, False),
+             (4, False), (5, False), (6, False)]
     for r, direct_only in order:
         for fid in called:
             if ranks[fid] == r and (fid in from_test or not direct_only):
                 return fid
     return called[0]
+
+
+def _is_callback(functions: dict[str, dict], fid: str) -> bool:
+    return _method(functions.get(fid, {}).get("qualname", ""))[1] in FRAMEWORK_CALLBACKS
+
+
+def _names(test_words: list[str], method_words: list[str]) -> bool:
+    """The test's name names this method: its words in a row (`processFindForm` in
+    `processFindFormSuccess`), or at least half its meaningful words (`createNewArticle`
+    in `create_article_with_tags`, `getProfileByUsername` in `profile_of_unknown_user`)."""
+    if _contains(test_words, method_words):
+        return True
+    meaningful = [w for w in method_words if w not in _FILLER]
+    shared = [w for w in meaningful if w in test_words]
+    return bool(shared) and 2 * len(shared) >= len(meaningful)

@@ -159,3 +159,36 @@ def test_the_exactly_named_handler_wins_even_behind_a_filter():
     steps += [{"kind": "call", "frame": 9}, {"kind": "line", "frame": 9}]
     fid = function_under_test(steps, frames, {"T.java:1"}, {}, {}, functions, {})
     assert functions[fid]["qualname"] == "CommentRestController.getComments"
+
+
+def _behind_filter(test, handler, arrange=(), lines=3):
+    """test -> [arrange calls] -> JwtFilter.doFilterInternal -> handler (as MockMvc records it
+    when the filter is project code)."""
+    steps, frames, functions = _spring_like([*arrange, ("JwtFilter.doFilterInternal", 4)], None, test)
+    functions["A.java:9"] = {"qualname": handler, "file": "src/main/java/A.java"}
+    frames["9"] = {"fn": "A.java:9", "parent": len(arrange) + 2}
+    steps += [{"kind": "call", "frame": 9}] + [{"kind": "line", "frame": 9}] * lines
+    fid = function_under_test(steps, frames, {"T.java:1"}, {}, {}, functions, {})
+    return functions[fid]["qualname"]
+
+
+def test_a_handler_behind_a_servlet_filter_counts_as_called_by_the_test():
+    assert _behind_filter("UserSliceTest.create_article_with_tags", "ArticleRestController.postArticle",
+                          arrange=[("UserRestController.postUser", 2)]) \
+        == "ArticleRestController.postArticle"
+    assert _behind_filter("UserSliceTest.profile_of_unknown_user_is_not_found",
+                          "ProfileRestController.getProfileByUsername") == "ProfileRestController.getProfileByUsername"
+
+
+def test_a_partial_name_never_picks_a_setter():
+    calls = [("NamedEntity.setName", 1), ("PetValidator.validate", 6)]
+    assert _pick(calls, "PetValidatorTests.validateWithInvalidPetName") == "PetValidator.validate"
+
+
+def test_a_hook_that_raised_beats_hooks_that_did_not():
+    steps, frames, functions = _spring_like([("OwnerController.setAllowedFields", 1), ("OwnerController.findOwner", 3)],
+                                            None, "PetClinicOutageSliceTests.showOwnerWhenStoreIsDownFails")
+    steps.append({"kind": "return", "frame": 3, "raised": True})
+    ann = {"A.java:2": {"InitBinder"}, "A.java:3": {"ModelAttribute"}}
+    fid = function_under_test(steps, frames, {"T.java:1"}, {}, {}, functions, ann)
+    assert functions[fid]["qualname"] == "OwnerController.findOwner"

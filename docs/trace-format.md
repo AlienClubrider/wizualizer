@@ -134,11 +134,14 @@ test as one `test` actor making the top-level calls.
 whose lines (from its flowchart) include a PR-changed line. Without one, it is
 the function the test names: `OwnerControllerTests#processFindFormSuccess`
 opens `OwnerController.processFindForm`. Then, in order: a function whose
-method the test names, one the test calls itself (the controller rather than
-the service behind it), one in the class the test names, any other production
-code. Constructors, one-line getters and setters, framework hooks (`@Bean`,
-`@InitBinder`, `@ModelAttribute`, `@PostConstruct`…) and calls that ran no
-line (an inline Mockito mock) are picked only when nothing else ran. Older traces without these fields play back
+method the test names (in full, or half its words: `create_article_with_tags`
+names `postArticle`), one the test calls itself (the controller rather than
+the service behind it; a servlet filter in between doesn't count), one in the
+class the test names, any other production code. Constructors, one-line
+getters and setters, framework hooks (`@Bean`, `@InitBinder`,
+`@ModelAttribute`, `doFilterInternal`, `preHandle`…) and calls that ran no
+line (an inline Mockito mock) are picked only when nothing else ran; then a
+hook that threw comes first. Older traces without these fields play back
 with every step shown.
 
 ## Step semantics
